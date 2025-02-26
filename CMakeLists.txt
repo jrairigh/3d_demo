@@ -37,3 +37,8 @@ add_executable(${PROJECT_NAME} runtime.cpp)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE glm::glm)
 target_link_libraries(${PROJECT_NAME} PRIVATE raylib)
+
+add_custom_command(
+    TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets
+    DEPENDS ${PROJECT_NAME})

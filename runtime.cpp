@@ -20,6 +20,7 @@ struct Vertex
 {
     glm::vec4 position;
     glm::vec4 color;
+    glm::vec2 uv;
 };
 
 struct Cube
@@ -53,9 +54,16 @@ const int g_screen_height = 450;
 MyCamera g_camera;
 ftype g_since_start = 0.0f;
 ftype g_frame_time = 0.0f;
-Texture2D g_depth_texture;
+Texture2D g_depth_tex2D;
+Image g_sprite_atlas;
 Image g_depth_map;
 bool g_is_rending_depth_buffer = false;
+float g_bias = 0.0f;
+float g_wall_x = 0;
+float g_wall_y = 0;
+int g_wall_column = 0;
+int g_wall_row = 0;
+glm::vec2 g_ui_zone{175, 175};
 
 void InitializeRuntime();
 void InitializeCamera();
@@ -69,13 +77,14 @@ void RenderUI();
 void RenderCube(const Cube& cube);
 void DrawAxis(const glm::vec4 position);
 void DrawLine3d(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color);
-void DrawPixel(const int x, const int y, const ftype z, const glm::vec4 color);
+void DrawPixel(const int x, const int y, const ftype z, const glm::vec2 uv, const glm::vec4 color);
 void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color);
 void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c);
 void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c);
 void LogMat4(const char* name, const glm::mat4& m4);
 void Log(const char* format, ...);
 ftype GetSmoothedMouseWheelScroll();
+glm::vec2 GetSmoothedMouseMove();
 glm::mat4 TRSMatrix(const glm::vec3 position,const glm::vec3 rotation_axis,const glm::vec3 scale, const float angle);
 glm::mat4 ProjectionMatrix();
 glm::mat4 OrthographicProjectionMatrix(const ftype fov, const ftype aspect, const ftype near, const ftype far);
@@ -103,6 +112,7 @@ void InitializeRuntime()
     SetTargetFPS(60);
 
     g_depth_map = GenImageColor(g_screen_width, g_screen_height, BLACK);
+    g_sprite_atlas = LoadImage("assets/WallpaperAtlas.png");
 }
 
 void InitializeCamera()
@@ -154,26 +164,31 @@ void RunGame()
 void CloseGame()
 {
     UnloadImage(g_depth_map);
+    UnloadImage(g_sprite_atlas);
+
+    if(IsTextureReady(g_depth_tex2D))
+    {
+        UnloadTexture(g_depth_tex2D);
+    }
+
     CloseWindow();
 }
 
 void Update()
 {
     const ftype zoom = GetSmoothedMouseWheelScroll();
-    const Vector2 mouse_delta = IsMouseButtonDown(MOUSE_LEFT_BUTTON)
-        ? GetMouseDelta() : Vector2{0.0f, 0.0f};
-    const glm::vec2 glm_mouse_delta = {-mouse_delta.x, mouse_delta.y};
+    const glm::vec2 glm_mouse_delta = GetSmoothedMouseMove();
 
     const bool is_zkey_pressed = IsKeyPressed(KEY_Z);
     if(is_zkey_pressed && !g_is_rending_depth_buffer)
     {
         g_is_rending_depth_buffer = true;
-        g_depth_texture = LoadTextureFromImage(g_depth_map);
+        g_depth_tex2D = LoadTextureFromImage(g_depth_map);
     }
     else if(is_zkey_pressed && g_is_rending_depth_buffer)
     {
         g_is_rending_depth_buffer = false;
-        UnloadTexture(g_depth_texture);
+        UnloadTexture(g_depth_tex2D);
     }
 
     UpdateCamera(zoom, glm_mouse_delta);
@@ -233,7 +248,7 @@ void RenderWorld()
 {
     if(g_is_rending_depth_buffer)
     {
-        DrawTexture(g_depth_texture, 0, 0, WHITE);
+        DrawTexture(g_depth_tex2D, 0, 0, WHITE);
         return;
     }
 
@@ -268,22 +283,35 @@ void RenderUI()
     state = g_is_rending_depth_buffer ? "Depth Buffer" : state;
     DrawText(state.c_str(), 10, 30, 20, YELLOW);
 
-    GuiSlider({35, 70, 100, 20}, "Near", TextFormat("%0.1f", g_camera.near_plane), &g_camera.near_plane, 0.1f, 10.0f);
-    GuiSlider({35, 90, 100, 20}, "Far", TextFormat("%0.1f", g_camera.far_plane), &g_camera.far_plane, 10.1f, 20.0f);
+    GuiSlider({35, 50, 100, 20}, "Col", TextFormat("%d", g_wall_column), &g_wall_x, 0, 7);
+    GuiSlider({35, 70, 100, 20}, "Row", TextFormat("%d", g_wall_row), &g_wall_y, 0, 14);
+    g_wall_column = (int)glm::round(g_wall_x);
+    g_wall_row = (int)glm::round(g_wall_y);
+    
+    GuiSlider({35, 90, 100, 20}, "Near", TextFormat("%0.1f", g_camera.near_plane), &g_camera.near_plane, 0.1f, 10.0f);
+    GuiSlider({35, 110, 100, 20}, "Far", TextFormat("%0.1f", g_camera.far_plane), &g_camera.far_plane, 10.1f, 20.0f);
+    DrawRectangleLines(0, 0, (int)g_ui_zone.x, (int)g_ui_zone.y, WHITE);
 }
 
 void RenderCube(const Cube& cube)
 {
     const glm::mat4 objectToWorldSpace = TRSMatrix(cube.position, cube.rotation_axis, cube.scale, cube.angular_speed * g_since_start);
+    const ftype uv_top_left_x = 1.0f / g_sprite_atlas.width;
+    const ftype uv_top_left_y = 16.0f / g_sprite_atlas.height;
+    const ftype wall_width = (64.0f / g_sprite_atlas.width) - uv_top_left_x;
+    const ftype wall_height = (79.0f / g_sprite_atlas.height) - uv_top_left_y;
+    const ftype uv_xOffset = (65.0f / g_sprite_atlas.width) * g_wall_column + uv_top_left_x;
+    const ftype uv_yOffset = (65.0f / g_sprite_atlas.height) * g_wall_row + uv_top_left_y;
     Vertex cube_vertices[8] = {
-        {{-1, -1, -1, 1}, {1, 0, 0, 1}},
-        {{-1, 1, -1, 1}, {0, 1, 0, 1}},
-        {{1, 1, -1, 1}, {0, 0, 1, 1}},
-        {{1, -1, -1, 1}, {1, 1, 0, 1}},
-        {{-1, -1, 1, 1}, {0, 0, 1, 1}},
-        {{-1, 1, 1, 1}, {1, 1, 0, 1}},
-        {{1, 1, 1, 1}, {1, 0, 0, 1}},
-        {{1, -1, 1, 1}, {0, 1, 0, 1}}
+        // Position        Color          UV
+        {{-1, -1, -1, 1}, {1, 0, 0, 1},   {uv_xOffset, uv_yOffset}},
+        {{-1, 1, -1, 1},  {0, 1, 0, 1},   {uv_xOffset, uv_yOffset + wall_height}},
+        {{1, 1, -1, 1},   {0, 0, 1, 1},   {uv_xOffset + wall_width, uv_yOffset + wall_height}},
+        {{1, -1, -1, 1},  {1, 1, 0, 1},   {uv_xOffset + wall_width, uv_yOffset}},
+        {{-1, -1, 1, 1},  {0, 0, 1, 1},   {uv_xOffset, uv_yOffset}},
+        {{-1, 1, 1, 1},   {1, 1, 0, 1},   {uv_xOffset, uv_yOffset + wall_height}},
+        {{1, 1, 1, 1},    {1, 0, 0, 1},   {uv_xOffset + wall_width, uv_yOffset + wall_height}},
+        {{1, -1, 1, 1},   {0, 1, 0, 1},   {uv_xOffset + wall_width, uv_yOffset}}
     };
 
     cube_vertices[0].position = objectToWorldSpace * cube_vertices[0].position;
@@ -338,7 +366,7 @@ void DrawLine3d(const glm::vec4 start, const glm::vec4 end, const glm::vec4 colo
     Rasterize3dLine(clippedStart, clippedEnd, color);
 }
 
-void DrawPixel(const int x, const int y, const ftype z, const glm::vec4 color)
+void DrawPixel(const int x, const int y, const ftype z, const glm::vec2 uv, const glm::vec4 color)
 {
     const bool is_outside_z_bounds = z < -1 || z > 1;
     const bool is_outside_screen_bounds = x < 0 || x >= g_screen_width || y < 0 || y >= g_screen_height;
@@ -354,9 +382,16 @@ void DrawPixel(const int x, const int y, const ftype z, const glm::vec4 color)
     }
 
     ImageDrawPixel(&g_depth_map, x, y, ColorFromNormalized({z, z, z, 1.0f}));
+    glm::mat2 uv_matrix{
+        g_sprite_atlas.width, 0,
+        0, g_sprite_atlas.height
+    };
 
-    const Color raylib_color = ColorFromNormalized({color.r, color.g, color.b, color.a});
-    DrawPixel(x, y, raylib_color);
+    const glm::ivec2 texcoords = uv_matrix * uv;
+    const Color texture_color = GetImageColor(g_sprite_atlas, texcoords.x, texcoords.y);
+
+    const Color vertex_color = ColorFromNormalized({color.r, color.g, color.b, color.a});
+    DrawPixel(x, y, texture_color);
 }
 
 void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color)
@@ -413,9 +448,9 @@ void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c)
     glm::vec4 c_screen = objectToScreenSpace * c.position;
     c_screen /= c_screen.w;
 
-    const Vertex a1 = {a_screen, a.color};
-    const Vertex b1 = {b_screen, b.color};
-    const Vertex c1 = {c_screen, c.color};
+    const Vertex a1 = {a_screen, a.color, a.uv};
+    const Vertex b1 = {b_screen, b.color, b.uv};
+    const Vertex c1 = {c_screen, c.color, c.uv};
     DrawTriangle(a1, b1, c1);
 }
 
@@ -429,10 +464,10 @@ void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c)
     const auto dim_y = max_y - min_y;
     const auto dim = dim_x * dim_y;
 
-    // TODO fix overlapping triangles using top-left edge rule
-    const int bias_0 = IsTopLeftOfTriangle(b.position, a.position) ? 0 : 0;
-    const int bias_1 = IsTopLeftOfTriangle(c.position, b.position) ? 0 : 0;
-    const int bias_2 = IsTopLeftOfTriangle(a.position, c.position) ? 0 : 0;
+    // fix overlapping triangles using top-left edge rule
+    const ftype bias_0 = IsTopLeftOfTriangle(a.position, b.position) ? 0.0f : -0.001f;
+    const ftype bias_1 = IsTopLeftOfTriangle(b.position, c.position) ? 0.0f : -0.001f;
+    const ftype bias_2 = IsTopLeftOfTriangle(c.position, a.position) ? 0.0f : -0.001f;
     
     const glm::vec3 a_to_b = b.position - a.position;
     const glm::vec3 a_to_c = c.position - a.position;
@@ -445,7 +480,8 @@ void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c)
         // when calculating the barycentric coordinates
         const ftype triangle_area = a_to_c.x * a_to_b.y - a_to_c.y * a_to_b.x;
         
-        if(triangle_area == 0)
+        // cull triangles that are facing away from camera (clockwise) or view angle makes it flat
+        if(triangle_area <= 0)
         {
             continue;
         }
@@ -455,7 +491,7 @@ void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c)
         const ftype alpha = (a_to_p.x * a_to_b.y - a_to_p.y * a_to_b.x) / triangle_area;
         const ftype beta = -(a_to_p.x * a_to_c.y - a_to_p.y * a_to_c.x) / triangle_area;
         const ftype gamma = 1 - alpha - beta;
-        const bool is_outside_triangle = alpha + bias_0 < 0 || beta + bias_1 < 0 || gamma + bias_2 < 0;
+        const bool is_outside_triangle = alpha + bias_0 < 0 || beta + bias_2 < 0 || gamma + bias_1 < 0;
 
         if(is_outside_triangle)
         {
@@ -464,7 +500,8 @@ void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c)
 
         const ftype z = gamma * a.position.z + alpha * c.position.z + beta * b.position.z;
         const glm::vec4 color = gamma * a.color + alpha * c.color + beta * b.color;
-        DrawPixel(x, y, z, color);
+        const glm::vec2 uv = gamma * a.uv + alpha * c.uv + beta * b.uv;
+        DrawPixel(x, y, z, uv, color);
     }
 }
 
@@ -498,6 +535,14 @@ ftype GetSmoothedMouseWheelScroll()
     const ftype avg_zoom = (zoom + last_zoom) * 0.5f;
     last_zoom = avg_zoom;
     return avg_zoom * g_frame_time;
+}
+
+glm::vec2 GetSmoothedMouseMove()
+{
+    const Vector2 mouse_delta = IsMouseButtonDown(MOUSE_LEFT_BUTTON) ? GetMouseDelta() : Vector2{0.0f, 0.0f};
+    const glm::vec2 glm_delta = {-mouse_delta.x, mouse_delta.y};
+    const Vector2 position = GetMousePosition();
+    return position.x < g_ui_zone.x && position.y < g_ui_zone.y ? glm::vec2{0.0f, 0.0f} : glm_delta;
 }
 
 glm::mat4 TRSMatrix(const glm::vec3 position, const glm::vec3 rotation_axis, const glm::vec3 scale, const float angle)
@@ -612,7 +657,7 @@ glm::mat4 Mat4(const glm::vec4 column1, const glm::vec4 column2, const glm::vec4
 bool IsTopLeftOfTriangle(const glm::vec2 from, const glm::vec2 to)
 {
     const glm::vec2 a_to_b = to - from;
-    const bool is_flat_edge = a_to_b.y == 0 && a_to_b.x > 0;
-    const bool is_left_edge = a_to_b.y < 0;
+    const bool is_flat_edge = a_to_b.y == 0 && a_to_b.x < 0;
+    const bool is_left_edge = a_to_b.y > 0;
     return is_flat_edge || is_left_edge;
 }
