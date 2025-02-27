@@ -64,6 +64,10 @@ float g_wall_y = 0;
 int g_wall_column = 0;
 int g_wall_row = 0;
 glm::vec2 g_ui_zone{175, 175};
+Mesh* g_raylib_mesh;
+Mesh g_raylib_meshes[4];
+int mesh_index;
+int last_mesh_index;
 
 void InitializeRuntime();
 void InitializeCamera();
@@ -74,7 +78,9 @@ void UpdateCamera(const ftype zoom, const glm::vec2 move);
 void Render();
 void RenderWorld();
 void RenderUI();
-void RenderCube(const Cube& cube);
+void DrawMesh();
+void DrawMyWeirdCubes();
+void DrawCube(const Cube& cube);
 void DrawAxis(const glm::vec4 position);
 void DrawLine3d(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color);
 void DrawPixel(const int x, const int y, const ftype z, const glm::vec2 uv, const glm::vec4 color);
@@ -113,6 +119,11 @@ void InitializeRuntime()
 
     g_depth_map = GenImageColor(g_screen_width, g_screen_height, BLACK);
     g_sprite_atlas = LoadImage("assets/WallpaperAtlas.png");
+
+    g_raylib_meshes[0] = GenMeshCone(1.0f, 1.0f, 20);
+    g_raylib_meshes[1] = GenMeshSphere(1.0f, 16, 16);
+    g_raylib_meshes[2] = GenMeshCylinder(1.0f, 1.0f, 20);
+    g_raylib_meshes[3] = GenMeshTorus(0.4f, 1.0f, 16, 32);
 }
 
 void InitializeCamera()
@@ -171,6 +182,11 @@ void CloseGame()
         UnloadTexture(g_depth_tex2D);
     }
 
+    UnloadMesh(g_raylib_meshes[0]);
+    UnloadMesh(g_raylib_meshes[1]);
+    UnloadMesh(g_raylib_meshes[2]);
+    UnloadMesh(g_raylib_meshes[3]);
+
     CloseWindow();
 }
 
@@ -191,6 +207,10 @@ void Update()
         UnloadTexture(g_depth_tex2D);
     }
 
+    const int pressed = IsKeyPressed(KEY_TAB) ? 1 : 0;
+    mesh_index = (mesh_index + pressed) % 5;
+    g_raylib_mesh = &g_raylib_meshes[mesh_index];
+
     UpdateCamera(zoom, glm_mouse_delta);
 }
 
@@ -202,7 +222,7 @@ void UpdateCamera(const ftype zoom, const glm::vec2 move)
 
     // Min fov at 20 for now so fps doesn't drop too much
     g_camera.fov += -zoom * g_camera.zoom_speed;
-    g_camera.fov = glm::clamp<float>(g_camera.fov, 20, 180);
+    g_camera.fov = glm::clamp<float>(g_camera.fov, 5, 180);
     
     const ftype length = glm::length(g_camera.position);
     const ftype rotation_speed = g_camera.rotation_speed * length;
@@ -216,7 +236,7 @@ void UpdateCamera(const ftype zoom, const glm::vec2 move)
     g_camera.worldToCameraSpace = LookAt(g_camera.position, g_camera.lookAt, g_camera.up);
 
     bool do_update_projection_matrix = false;
-    do_update_projection_matrix = false;//IsKeyPressed(KEY_SPACE);
+    do_update_projection_matrix = IsKeyPressed(KEY_SPACE);
     g_camera.is_orthographic = do_update_projection_matrix ? !g_camera.is_orthographic : g_camera.is_orthographic;
 
     do_update_projection_matrix = last_fov != g_camera.fov || do_update_projection_matrix;
@@ -254,24 +274,19 @@ void RenderWorld()
 
     ImageClearBackground(&g_depth_map, WHITE);
 
-    const Cube cubes[7] = {
-        {{0, 0, 0},{1,0,0},{1,1,1}, {1,1,1,1}, 0},
-        {{1.5f, 0, 0},{1,0,0},{0.5f,0.5f,0.5f}, {1,0,0,1}, 1},
-        {{0, 1.5f, 0},{0,1,0},{0.5f,0.5f,0.5f}, {0,1,0,1}, 1},
-        {{0, 0, 1.5f},{0,0,1},{0.5f,0.5f,0.5f}, {0,0,1,1}, 1},
-        {{-1.5f, 0, 0},{1,0,0},{0.5f,0.5f,0.5f}, {1,0,0,1}, 1},
-        {{0, -1.5f, 0},{0,1,0},{0.5f,0.5f,0.5f}, {0,1,0,1}, 1},
-        {{0, 0, -1.5f},{0,0,1},{0.5f,0.5f,0.5f}, {0,0,1,1}, 1},
-    };
-    
-    RenderCube(cubes[0]);
-    RenderCube(cubes[1]);
-    RenderCube(cubes[2]);
-    RenderCube(cubes[3]);
-    RenderCube(cubes[4]);
-    RenderCube(cubes[5]);
-    RenderCube(cubes[6]);
-    
+    switch(mesh_index)
+    {
+    case 0:
+    case 1:
+    case 2:
+    case 3:
+        DrawMesh();
+        break;
+    default:
+        DrawMyWeirdCubes();
+        break;
+    }
+
     DrawAxis(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
 }
 
@@ -293,7 +308,56 @@ void RenderUI()
     DrawRectangleLines(0, 0, (int)g_ui_zone.x, (int)g_ui_zone.y, WHITE);
 }
 
-void RenderCube(const Cube& cube)
+void DrawMesh()
+{
+    for(int i = 0; i < g_raylib_mesh->triangleCount; ++i)
+    {
+        if(g_raylib_mesh->indices)
+        {
+
+        }
+        else
+        {
+            const int j = i * 9;
+            const ftype x1 = (ftype)g_raylib_mesh->vertices[j];
+            const ftype y1 = (ftype)g_raylib_mesh->vertices[j + 1];
+            const ftype z1 = (ftype)g_raylib_mesh->vertices[j + 2];
+            const ftype x2 = (ftype)g_raylib_mesh->vertices[j + 3];
+            const ftype y2 = (ftype)g_raylib_mesh->vertices[j + 4];
+            const ftype z2 = (ftype)g_raylib_mesh->vertices[j + 5];
+            const ftype x3 = (ftype)g_raylib_mesh->vertices[j + 6];
+            const ftype y3 = (ftype)g_raylib_mesh->vertices[j + 7];
+            const ftype z3 = (ftype)g_raylib_mesh->vertices[j + 8];
+            const Vertex a = {{x1, y1, z1, 1}, {1, 0, 0, 1}, {0, 0}};
+            const Vertex b = {{x2, y2, z2, 1}, {0, 1, 0, 1}, {0, 0}};
+            const Vertex c = {{x3, y3, z3, 1}, {0, 0, 1, 1}, {0, 0}};
+            Draw3dTriangle(a, b, c);
+        }
+    }
+}
+
+void DrawMyWeirdCubes()
+{
+    const Cube cubes[7] = {
+        {{0, 0, 0},{1,0,0},{1,1,1}, {1,1,1,1}, 0},
+        {{1.5f, 0, 0},{1,0,0},{0.5f,0.5f,0.5f}, {1,0,0,1}, 1},
+        {{0, 1.5f, 0},{0,1,0},{0.5f,0.5f,0.5f}, {0,1,0,1}, 1},
+        {{0, 0, 1.5f},{0,0,1},{0.5f,0.5f,0.5f}, {0,0,1,1}, 1},
+        {{-1.5f, 0, 0},{1,0,0},{0.5f,0.5f,0.5f}, {1,0,0,1}, 1},
+        {{0, -1.5f, 0},{0,1,0},{0.5f,0.5f,0.5f}, {0,1,0,1}, 1},
+        {{0, 0, -1.5f},{0,0,1},{0.5f,0.5f,0.5f}, {0,0,1,1}, 1},
+    };
+    
+    DrawCube(cubes[0]);
+    DrawCube(cubes[1]);
+    DrawCube(cubes[2]);
+    DrawCube(cubes[3]);
+    DrawCube(cubes[4]);
+    DrawCube(cubes[5]);
+    DrawCube(cubes[6]);
+}
+
+void DrawCube(const Cube& cube)
 {
     const glm::mat4 objectToWorldSpace = TRSMatrix(cube.position, cube.rotation_axis, cube.scale, cube.angular_speed * g_since_start);
     const ftype uv_top_left_x = 1.0f / g_sprite_atlas.width;
@@ -391,7 +455,7 @@ void DrawPixel(const int x, const int y, const ftype z, const glm::vec2 uv, cons
     const Color texture_color = GetImageColor(g_sprite_atlas, texcoords.x, texcoords.y);
 
     const Color vertex_color = ColorFromNormalized({color.r, color.g, color.b, color.a});
-    DrawPixel(x, y, texture_color);
+    DrawPixel(x, y, vertex_color);
 }
 
 void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color)
@@ -465,9 +529,11 @@ void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c)
     const auto dim = dim_x * dim_y;
 
     // fix overlapping triangles using top-left edge rule
-    const ftype bias_0 = IsTopLeftOfTriangle(a.position, b.position) ? 0.0f : -0.001f;
-    const ftype bias_1 = IsTopLeftOfTriangle(b.position, c.position) ? 0.0f : -0.001f;
-    const ftype bias_2 = IsTopLeftOfTriangle(c.position, a.position) ? 0.0f : -0.001f;
+    // there's issue using floating point because the floating point numbers are not evenly spaced.
+    // Solution is using fixed point numbers.
+    const ftype bias_0 = IsTopLeftOfTriangle(a.position, b.position) ? 0.0f : -0.0001f;
+    const ftype bias_1 = IsTopLeftOfTriangle(b.position, c.position) ? 0.0f : -0.0001f;
+    const ftype bias_2 = IsTopLeftOfTriangle(c.position, a.position) ? 0.0f : -0.0001f;
     
     const glm::vec3 a_to_b = b.position - a.position;
     const glm::vec3 a_to_c = c.position - a.position;
