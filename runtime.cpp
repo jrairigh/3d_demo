@@ -10,6 +10,7 @@
 #include "glm/mat4x4.hpp"
 #include "glm/ext/matrix_transform.hpp"
 #include "glm/ext/matrix_clip_space.hpp"
+#include "glm/gtc/epsilon.hpp"
 
 #include <string>
 #include <time.h>
@@ -58,6 +59,7 @@ Texture2D g_depth_tex2D;
 Image g_sprite_atlas;
 Image g_depth_map;
 bool g_is_rending_depth_buffer = false;
+bool g_draw_triangle_edges = false;
 float g_bias = 0.0f;
 float g_wall_x = 0;
 float g_wall_y = 0;
@@ -83,10 +85,12 @@ void DrawMyWeirdCubes();
 void DrawCube(const Cube& cube);
 void DrawAxis(const glm::vec4 position);
 void DrawLine3d(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color);
-void DrawPixel(const int x, const int y, const ftype z, const glm::vec2 uv, const glm::vec4 color);
+void DrawColorPixel(const int x, const int y, const ftype z, const glm::vec4 color);
+void DrawTextureSampledPixel(const int x, const int y, const ftype z, const glm::vec2 uv);
+void DrawPixel(const int x, const int y, const ftype z, const glm::vec4 color);
 void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color);
-void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c);
-void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c);
+void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only);
+void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only);
 void LogMat4(const char* name, const glm::mat4& m4);
 void Log(const char* format, ...);
 ftype GetSmoothedMouseWheelScroll();
@@ -211,6 +215,16 @@ void Update()
     mesh_index = (mesh_index + pressed) % 5;
     g_raylib_mesh = &g_raylib_meshes[mesh_index];
 
+    const bool is_wkey_pressed = IsKeyPressed(KEY_W);
+    if(is_wkey_pressed & !g_draw_triangle_edges)
+    {
+        g_draw_triangle_edges = true;
+    }
+    else if(is_wkey_pressed && g_draw_triangle_edges)
+    {
+        g_draw_triangle_edges = false;
+    }
+
     UpdateCamera(zoom, glm_mouse_delta);
 }
 
@@ -331,7 +345,7 @@ void DrawMesh()
             const Vertex a = {{x1, y1, z1, 1}, {1, 0, 0, 1}, {0, 0}};
             const Vertex b = {{x2, y2, z2, 1}, {0, 1, 0, 1}, {0, 0}};
             const Vertex c = {{x3, y3, z3, 1}, {0, 0, 1, 1}, {0, 0}};
-            Draw3dTriangle(a, b, c);
+            Draw3dTriangle(a, b, c, g_draw_triangle_edges);
         }
     }
 }
@@ -339,7 +353,7 @@ void DrawMesh()
 void DrawMyWeirdCubes()
 {
     const Cube cubes[7] = {
-        {{0, 0, 0},{1,0,0},{1,1,1}, {1,1,1,1}, 0},
+        {{0, 0, 0},{1,0,0},{5,1,1}, {1,1,1,1}, 0},
         {{1.5f, 0, 0},{1,0,0},{0.5f,0.5f,0.5f}, {1,0,0,1}, 1},
         {{0, 1.5f, 0},{0,1,0},{0.5f,0.5f,0.5f}, {0,1,0,1}, 1},
         {{0, 0, 1.5f},{0,0,1},{0.5f,0.5f,0.5f}, {0,0,1,1}, 1},
@@ -349,12 +363,12 @@ void DrawMyWeirdCubes()
     };
     
     DrawCube(cubes[0]);
-    DrawCube(cubes[1]);
-    DrawCube(cubes[2]);
-    DrawCube(cubes[3]);
-    DrawCube(cubes[4]);
-    DrawCube(cubes[5]);
-    DrawCube(cubes[6]);
+    //DrawCube(cubes[1]);
+    //DrawCube(cubes[2]);
+    //DrawCube(cubes[3]);
+    //DrawCube(cubes[4]);
+    //DrawCube(cubes[5]);
+    //DrawCube(cubes[6]);
 }
 
 void DrawCube(const Cube& cube)
@@ -387,23 +401,23 @@ void DrawCube(const Cube& cube)
     cube_vertices[6].position = objectToWorldSpace * cube_vertices[6].position;
     cube_vertices[7].position = objectToWorldSpace * cube_vertices[7].position;
 
-    Draw3dTriangle(cube_vertices[2], cube_vertices[0], cube_vertices[1]);
-    Draw3dTriangle(cube_vertices[3], cube_vertices[0], cube_vertices[2]);
+    Draw3dTriangle(cube_vertices[2], cube_vertices[0], cube_vertices[1], g_draw_triangle_edges);
+    Draw3dTriangle(cube_vertices[3], cube_vertices[0], cube_vertices[2], g_draw_triangle_edges);
 
-    Draw3dTriangle(cube_vertices[6], cube_vertices[5], cube_vertices[4]);
-    Draw3dTriangle(cube_vertices[7], cube_vertices[6], cube_vertices[4]);
+    Draw3dTriangle(cube_vertices[6], cube_vertices[5], cube_vertices[4], g_draw_triangle_edges);
+    Draw3dTriangle(cube_vertices[7], cube_vertices[6], cube_vertices[4], g_draw_triangle_edges);
 
-    Draw3dTriangle(cube_vertices[6], cube_vertices[1], cube_vertices[5]);
-    Draw3dTriangle(cube_vertices[1], cube_vertices[6], cube_vertices[2]);
+    Draw3dTriangle(cube_vertices[6], cube_vertices[1], cube_vertices[5], g_draw_triangle_edges);
+    Draw3dTriangle(cube_vertices[1], cube_vertices[6], cube_vertices[2], g_draw_triangle_edges);
 
-    Draw3dTriangle(cube_vertices[7], cube_vertices[4], cube_vertices[0]);
-    Draw3dTriangle(cube_vertices[7], cube_vertices[0], cube_vertices[3]);
+    Draw3dTriangle(cube_vertices[7], cube_vertices[4], cube_vertices[0], g_draw_triangle_edges);
+    Draw3dTriangle(cube_vertices[7], cube_vertices[0], cube_vertices[3], g_draw_triangle_edges);
 
-    Draw3dTriangle(cube_vertices[6], cube_vertices[7], cube_vertices[2]);
-    Draw3dTriangle(cube_vertices[7], cube_vertices[3], cube_vertices[2]);
+    Draw3dTriangle(cube_vertices[6], cube_vertices[7], cube_vertices[2], g_draw_triangle_edges);
+    Draw3dTriangle(cube_vertices[7], cube_vertices[3], cube_vertices[2], g_draw_triangle_edges);
 
-    Draw3dTriangle(cube_vertices[5], cube_vertices[1], cube_vertices[0]);
-    Draw3dTriangle(cube_vertices[5], cube_vertices[0], cube_vertices[4]);
+    Draw3dTriangle(cube_vertices[5], cube_vertices[1], cube_vertices[0], g_draw_triangle_edges);
+    Draw3dTriangle(cube_vertices[5], cube_vertices[0], cube_vertices[4], g_draw_triangle_edges);
 }
 
 void DrawAxis(const glm::vec4 position)
@@ -430,7 +444,26 @@ void DrawLine3d(const glm::vec4 start, const glm::vec4 end, const glm::vec4 colo
     Rasterize3dLine(clippedStart, clippedEnd, color);
 }
 
-void DrawPixel(const int x, const int y, const ftype z, const glm::vec2 uv, const glm::vec4 color)
+void DrawColorPixel(const int x, const int y, const ftype z, const glm::vec4 color)
+{
+    DrawPixel(x, y, z, color);
+}
+
+void DrawTextureSampledPixel(const int x, const int y, const ftype z, const glm::vec2 uv)
+{
+    glm::mat2 uv_matrix{
+        g_sprite_atlas.width, 0,
+        0, g_sprite_atlas.height
+    };
+
+    // affine texture mapping (creates the wobbly textures characteristic of PS1 games)
+    const glm::ivec2 texcoords = uv_matrix * uv;
+    const Vector4 color = ColorNormalize(GetImageColor(g_sprite_atlas, texcoords.x % g_sprite_atlas.width, texcoords.y % g_sprite_atlas.height));
+
+    DrawPixel(x, y, z, {color.x, color.y, color.z, color.w});
+}
+
+void DrawPixel(const int x, const int y, const ftype z, const glm::vec4 color)
 {
     const bool is_outside_z_bounds = z < -1 || z > 1;
     const bool is_outside_screen_bounds = x < 0 || x >= g_screen_width || y < 0 || y >= g_screen_height;
@@ -446,16 +479,7 @@ void DrawPixel(const int x, const int y, const ftype z, const glm::vec2 uv, cons
     }
 
     ImageDrawPixel(&g_depth_map, x, y, ColorFromNormalized({z, z, z, 1.0f}));
-    glm::mat2 uv_matrix{
-        g_sprite_atlas.width, 0,
-        0, g_sprite_atlas.height
-    };
-
-    const glm::ivec2 texcoords = uv_matrix * uv;
-    const Color texture_color = GetImageColor(g_sprite_atlas, texcoords.x, texcoords.y);
-
-    const Color vertex_color = ColorFromNormalized({color.r, color.g, color.b, color.a});
-    DrawPixel(x, y, vertex_color);
+    DrawPixel(x, y, ColorFromNormalized({color.r, color.g, color.b, color.a}));
 }
 
 void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color)
@@ -499,7 +523,7 @@ void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4
     }
 }
 
-void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c)
+void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only)
 {
     const glm::mat4 objectToScreenSpace = g_camera.clipToScreenSpace * g_camera.projectionMatrix * g_camera.worldToCameraSpace;
 
@@ -515,10 +539,10 @@ void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c)
     const Vertex a1 = {a_screen, a.color, a.uv};
     const Vertex b1 = {b_screen, b.color, b.uv};
     const Vertex c1 = {c_screen, c.color, c.uv};
-    DrawTriangle(a1, b1, c1);
+    DrawTriangle(a1, b1, c1, edges_only);
 }
 
-void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c)
+void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only)
 {
     const auto min_x = (int)glm::round(glm::min(a.position.x, glm::min(b.position.x, c.position.x)));
     const auto max_x = (int)glm::round(glm::max(a.position.x, glm::max(b.position.x, c.position.x)));
@@ -567,7 +591,17 @@ void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c)
         const ftype z = gamma * a.position.z + alpha * c.position.z + beta * b.position.z;
         const glm::vec4 color = gamma * a.color + alpha * c.color + beta * b.color;
         const glm::vec2 uv = gamma * a.uv + alpha * c.uv + beta * b.uv;
-        DrawPixel(x, y, z, uv, color);
+
+        const ftype epsilon = 0.01f;
+        if(edges_only && (glm::epsilonEqual(alpha, 0.0f, epsilon) || glm::epsilonEqual(beta, 0.0f, epsilon) || glm::epsilonEqual(gamma, 0.0f, epsilon)))
+        {
+            const glm::vec4 white{1.0f, 1.0f, 1.0f, 1.0f};
+            DrawColorPixel(x, y, z, white);
+        }
+        else
+        {
+            DrawTextureSampledPixel(x, y, z, uv);
+        }
     }
 }
 
