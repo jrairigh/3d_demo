@@ -1,21 +1,11 @@
-#include "raylib.h"
-#include "raymath.h"
+#include "viewport.h"
 
 #define RAYGUI_IMPLEMENTATION
 #include "raygui_enums.h"
 #include "raygui.h"
 
-#include "glm/vec3.hpp"
-#include "glm/vec4.hpp"
-#include "glm/mat4x4.hpp"
-#include "glm/ext/matrix_transform.hpp"
-#include "glm/ext/matrix_clip_space.hpp"
-#include "glm/gtc/epsilon.hpp"
-
 #include <string>
 #include <time.h>
-
-typedef float ftype;
 
 struct Vertex
 {
@@ -33,31 +23,11 @@ struct Cube
     float angular_speed;
 };
 
-struct MyCamera
-{
-    glm::vec3 position;
-    glm::vec3 lookAt;
-    glm::vec3 up;
-    glm::mat4 worldToCameraSpace;
-    glm::mat4 projectionMatrix;
-    glm::mat4 clipToScreenSpace;
-    ftype near_plane;
-    ftype far_plane;
-    ftype fov;
-    ftype aspect;
-    ftype zoom_speed;
-    ftype rotation_speed;
-    bool is_orthographic;
-};
-
-const int g_screen_width = 800;
-const int g_screen_height = 450;
-MyCamera g_camera;
+Viewport g_main_viewport;
 ftype g_since_start = 0.0f;
 ftype g_frame_time = 0.0f;
 Texture2D g_depth_tex2D;
 Image g_sprite_atlas;
-Image g_depth_map;
 bool g_is_rending_depth_buffer = false;
 bool g_draw_triangle_edges = false;
 bool g_is_viewing_performance_metrics = false;
@@ -67,41 +37,37 @@ float g_wall_y = 0;
 int g_wall_column = 0;
 int g_wall_row = 0;
 glm::vec2 g_ui_zone{175, 175};
-Mesh* g_raylib_mesh;
-Mesh g_raylib_meshes[4];
-int g_mesh_index;
 int g_pixels_outside_screen = 0;
 int g_pixels_behind_other_pixels = 0;
 int g_backfacing_triangles = 0;
 
 void InitializeRuntime();
-void InitializeCamera();
+void InitializeCamera(Viewport& viewport, const glm::ivec4& transform);
 void RunGame();
 void CloseGame();
 void Update();
-void UpdateCamera(const ftype zoom, const glm::vec2 move);
+void UpdateCamera(Viewport& viewport, const ftype zoom, const glm::vec2 move);
+void UpdateViewport(Viewport& viewport);
 void Render();
-void RenderWorld();
+void RenderWorld(Viewport& viewport);
 void RenderUI();
 void DrawPerformanceMetrics();
-void DrawMesh();
-void DrawMyWeirdCubes();
-void DrawCube(const Cube& cube);
-void DrawAxis(const glm::vec4 position);
-void DrawLine3d(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color);
-void DrawColorPixel(const int x, const int y, const ftype z, const glm::vec4 color);
-void DrawTextureSampledPixel(const int x, const int y, const ftype z, const glm::vec2 uv);
-void DrawPixel(const int x, const int y, const ftype z, const glm::vec4 color);
-void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color);
-void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only);
-void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only);
-void DrawQuad(const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, const bool edges_only);
+void DrawMyWeirdCubes(Viewport& viewport);
+void DrawCube(Viewport& viewport, const Cube& cube);
+void DrawAxis(const Viewport& viewport, const glm::vec4 position);
+void DrawLine3d(const Viewport& viewport, const glm::vec4 start, const glm::vec4 end, const glm::vec4 color);
+void DrawColorPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color);
+void DrawTextureSampledPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec2 uv);
+void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color);
+void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only);
+void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only);
+void DrawQuad(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, const bool edges_only);
 void LogMat4(const char* name, const glm::mat4& m4);
 void Log(const char* format, ...);
 ftype GetSmoothedMouseWheelScroll();
 glm::vec2 GetSmoothedMouseMove();
 glm::mat4 TRSMatrix(const glm::vec3 position,const glm::vec3 rotation_axis,const glm::vec3 scale, const float angle);
-glm::mat4 ProjectionMatrix();
+glm::mat4 ProjectionMatrix(const Viewport& viewport);
 glm::mat4 OrthographicProjectionMatrix(const ftype fov, const ftype aspect, const ftype near, const ftype far);
 glm::mat4 PerspectiveProjectionMatrix(const ftype fov, const ftype aspect, const ftype near, const ftype far);
 glm::mat4 RotationMatrix(const glm::vec3 axis, const ftype angle);
@@ -118,56 +84,39 @@ int main()
 
 void InitializeRuntime()
 {
-    InitWindow(g_screen_width, g_screen_height, "3D Demo");
+    const int screen_width = 800;
+    const int screen_height = 450;
+    InitWindow(screen_width, screen_height, "3D Demo");
+    SetWindowState(FLAG_WINDOW_RESIZABLE);
     GuiLoadStyleDefault();
 
     SetTraceLogLevel(LOG_DEBUG);
 
-    InitializeCamera();
+    InitializeCamera(g_main_viewport, {0, 0, screen_width, screen_height});
     SetTargetFPS(60);
 
-    g_depth_map = GenImageColor(g_screen_width, g_screen_height, BLACK);
     g_sprite_atlas = LoadImage("assets/WallpaperAtlas.png");
-
-    g_raylib_meshes[0] = GenMeshCone(1.0f, 1.0f, 20);
-    g_raylib_meshes[1] = GenMeshSphere(1.0f, 16, 16);
-    g_raylib_meshes[2] = GenMeshCylinder(1.0f, 1.0f, 20);
-    g_raylib_meshes[3] = GenMeshTorus(0.4f, 1.0f, 16, 32);
 }
 
-void InitializeCamera()
+void InitializeCamera(Viewport& viewport, const glm::ivec4& transform)
 {
-    const ftype aspect = (ftype)g_screen_width / (ftype)g_screen_height;
     const ftype near_plane = 5.0f;
     const ftype far_plane = 100.0f;
     const ftype fov = 20.0f;
-    const ftype half_screen_width = g_screen_width * 0.5f;
-    const ftype half_screen_height = g_screen_height * 0.5f;
-
-    g_camera.position = glm::vec3(0.0f, 0.0f, 15.0f);
-    g_camera.lookAt = glm::vec3(0.0f, 0.0f, 0.0f);
-    g_camera.up = glm::vec3(0.0f, 1.0f, 0.0f);
-    g_camera.near_plane = near_plane;
-    g_camera.far_plane = far_plane;
-    g_camera.fov = fov;
-    g_camera.aspect = aspect;
-    g_camera.zoom_speed = 250.0f;
-    g_camera.rotation_speed = 50.0f;
-    g_camera.is_orthographic = false;
-
-    g_camera.worldToCameraSpace = LookAt(g_camera.position, g_camera.lookAt, g_camera.up);
-    LogMat4("World To Camera", g_camera.worldToCameraSpace);
-
-    g_camera.projectionMatrix = ProjectionMatrix();
-    LogMat4("Projection", g_camera.projectionMatrix);
     
-    g_camera.clipToScreenSpace = glm::mat4(
-        half_screen_width, 0.0f, 0.0f, 0.0f,
-        0.0f, -half_screen_height, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        half_screen_width, half_screen_height, 0.0f, 1.0f
-    );
-    LogMat4("Clip To Screen", g_camera.clipToScreenSpace);
+    MyCamera& camera = viewport.camera;
+    camera.position = glm::vec3(0.0f, 0.0f, 15.0f);
+    camera.lookAt = glm::vec3(0.0f, 0.0f, 0.0f);
+    camera.up = glm::vec3(0.0f, 1.0f, 0.0f);
+    camera.near_plane = near_plane;
+    camera.far_plane = far_plane;
+    camera.fov = fov;
+    camera.zoom_speed = 250.0f;
+    camera.rotation_speed = 50.0f;
+    camera.is_orthographic = false;
+    
+    viewport.transform = transform;
+    UpdateViewport(viewport);
 }
 
 void RunGame()
@@ -183,18 +132,20 @@ void RunGame()
 
 void CloseGame()
 {
-    UnloadImage(g_depth_map);
-    UnloadImage(g_sprite_atlas);
+    if(IsImageReady(g_main_viewport.depth_map))
+    {
+        UnloadImage(g_main_viewport.depth_map);
+    }
+
+    if(IsImageReady(g_sprite_atlas))
+    {
+        UnloadImage(g_sprite_atlas);
+    }
 
     if(IsTextureReady(g_depth_tex2D))
     {
         UnloadTexture(g_depth_tex2D);
     }
-
-    UnloadMesh(g_raylib_meshes[0]);
-    UnloadMesh(g_raylib_meshes[1]);
-    UnloadMesh(g_raylib_meshes[2]);
-    UnloadMesh(g_raylib_meshes[3]);
 
     CloseWindow();
 }
@@ -208,17 +159,13 @@ void Update()
     if(is_zkey_pressed && !g_is_rending_depth_buffer)
     {
         g_is_rending_depth_buffer = true;
-        g_depth_tex2D = LoadTextureFromImage(g_depth_map);
+        g_depth_tex2D = LoadTextureFromImage(g_main_viewport.depth_map);
     }
     else if(is_zkey_pressed && g_is_rending_depth_buffer)
     {
         g_is_rending_depth_buffer = false;
         UnloadTexture(g_depth_tex2D);
     }
-
-    const int pressed = IsKeyPressed(KEY_TAB) ? 1 : 0;
-    g_mesh_index = (g_mesh_index + pressed) % 5;
-    g_raylib_mesh = &g_raylib_meshes[g_mesh_index];
 
     const bool is_wkey_pressed = IsKeyPressed(KEY_W);
     if(is_wkey_pressed & !g_draw_triangle_edges)
@@ -240,48 +187,83 @@ void Update()
         g_is_viewing_performance_metrics = false;
     }
 
-    UpdateCamera(zoom, glm_mouse_delta);
+    UpdateCamera(g_main_viewport, zoom, glm_mouse_delta);
 }
 
-void UpdateCamera(const ftype zoom, const glm::vec2 move)
+void UpdateCamera(Viewport& viewport, const ftype zoom, const glm::vec2 move)
 {
-    static ftype last_fov = g_camera.fov;
-    static ftype last_near = g_camera.near_plane;
-    static ftype last_far = g_camera.far_plane;
+    MyCamera& camera = viewport.camera;
+    static ftype last_fov = camera.fov;
+    static ftype last_near = camera.near_plane;
+    static ftype last_far = camera.far_plane;
 
     // Min fov at 20 for now so fps doesn't drop too much
-    g_camera.fov += -zoom * g_camera.zoom_speed;
-    g_camera.fov = glm::clamp<float>(g_camera.fov, 5, 180);
+    camera.fov += -zoom * camera.zoom_speed;
+    camera.fov = glm::clamp<float>(camera.fov, 5, 180);
     
-    const ftype length = glm::length(g_camera.position);
-    const ftype rotation_speed = g_camera.rotation_speed * length;
+    const ftype length = glm::length(camera.position);
+    const ftype rotation_speed = camera.rotation_speed * length;
     
-    const glm::vec3 forward = glm::normalize(g_camera.lookAt - g_camera.position);
-    const glm::vec3 right = glm::cross(forward, g_camera.up);
-    const glm::vec3 move_delta = right * move.x + g_camera.up * move.y;
-    g_camera.position += rotation_speed * g_frame_time * move_delta;
-    g_camera.position = length * glm::normalize(g_camera.position);
-    g_camera.up = glm::cross(right, forward);
-    g_camera.worldToCameraSpace = LookAt(g_camera.position, g_camera.lookAt, g_camera.up);
+    const glm::vec3 forward = glm::normalize(camera.lookAt - camera.position);
+    const glm::vec3 right = glm::cross(forward, camera.up);
+    const glm::vec3 move_delta = right * move.x + camera.up * move.y;
+    camera.position += rotation_speed * g_frame_time * move_delta;
+    camera.position = length * glm::normalize(camera.position);
+    camera.up = glm::cross(right, forward);
+    camera.worldToCameraSpace = LookAt(camera.position, camera.lookAt, camera.up);
 
     bool do_update_projection_matrix = false;
     do_update_projection_matrix = IsKeyPressed(KEY_SPACE);
-    g_camera.is_orthographic = do_update_projection_matrix ? !g_camera.is_orthographic : g_camera.is_orthographic;
+    camera.is_orthographic = do_update_projection_matrix ? !camera.is_orthographic : camera.is_orthographic;
 
-    do_update_projection_matrix = last_fov != g_camera.fov || do_update_projection_matrix;
-    last_fov = do_update_projection_matrix ? g_camera.fov : last_fov;
+    do_update_projection_matrix = last_fov != camera.fov || do_update_projection_matrix;
+    last_fov = do_update_projection_matrix ? camera.fov : last_fov;
 
-    do_update_projection_matrix = last_near != g_camera.near_plane || do_update_projection_matrix;
-    last_near = do_update_projection_matrix ? g_camera.near_plane : last_near;
+    do_update_projection_matrix = last_near != camera.near_plane || do_update_projection_matrix;
+    last_near = do_update_projection_matrix ? camera.near_plane : last_near;
 
-    do_update_projection_matrix = last_far != g_camera.far_plane || do_update_projection_matrix;
-    last_far = do_update_projection_matrix ? g_camera.far_plane : last_far;
+    do_update_projection_matrix = last_far != camera.far_plane || do_update_projection_matrix;
+    last_far = do_update_projection_matrix ? camera.far_plane : last_far;
 
-    if(do_update_projection_matrix)
+    if(do_update_projection_matrix || IsWindowResized())
     {
-        g_camera.projectionMatrix = ProjectionMatrix();
-        LogMat4("Projection", g_camera.projectionMatrix);
+        UpdateViewport(viewport);
     }
+}
+
+void UpdateViewport(Viewport& viewport)
+{
+    viewport.transform.z = GetScreenWidth();
+    viewport.transform.w = GetScreenHeight();
+    const int width = viewport.transform.z;
+    const int height = viewport.transform.w;
+    MyCamera& camera = viewport.camera;
+    const ftype aspect = (ftype)width / (ftype)height;
+    const ftype half_screen_width = width * 0.5f;
+    const ftype half_screen_height = height * 0.5f;
+
+    camera.aspect = aspect;
+
+    camera.worldToCameraSpace = LookAt(camera.position, camera.lookAt, camera.up);
+    LogMat4("World To Camera", camera.worldToCameraSpace);
+
+    camera.projectionMatrix = ProjectionMatrix(viewport);
+    LogMat4("Projection", camera.projectionMatrix);
+    
+    camera.clipToScreenSpace = glm::mat4(
+        half_screen_width, 0.0f, 0.0f, 0.0f,
+        0.0f, -half_screen_height, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        half_screen_width, half_screen_height, 0.0f, 1.0f
+    );
+    LogMat4("Clip To Screen", camera.clipToScreenSpace);
+
+    if(IsImageReady(viewport.depth_map))
+    {
+        UnloadImage(viewport.depth_map);
+    }
+
+    viewport.depth_map = GenImageColor(width, height, WHITE);
 }
 
 void Render()
@@ -291,14 +273,14 @@ void Render()
     g_pixels_behind_other_pixels = 0;
     BeginDrawing();
     ClearBackground(BLACK);
-    RenderWorld();
+    RenderWorld(g_main_viewport);
     RenderUI();
     EndDrawing();
-    Log("Pixels outside screen: %d", g_pixels_outside_screen);
+    //Log("Pixels outside screen: %d", g_pixels_outside_screen);
     //Log("Pixels behind other pixels: %d", g_pixels_behind_other_pixels);
 }
 
-void RenderWorld()
+void RenderWorld(Viewport& viewport)
 {
     if(g_is_rending_depth_buffer)
     {
@@ -306,31 +288,17 @@ void RenderWorld()
         return;
     }
 
-    ImageClearBackground(&g_depth_map, WHITE);
+    ImageClearBackground(&viewport.depth_map, WHITE);
 
-    /*
-    switch(g_mesh_index)
-    {
-        case 0:
-        case 1:
-        case 2:
-        case 3:
-        DrawMesh();
-        break;
-        default:
-        DrawMyWeirdCubes();
-        break;
-    }
-    */
+    DrawMyWeirdCubes(viewport);
 
-    DrawMyWeirdCubes();
-
-    DrawAxis(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+    DrawAxis(viewport, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
 }
 
 void RenderUI()
 {
-    std::string state = g_camera.is_orthographic ? "Orthographic" : "Perspective";
+    MyCamera& camera = g_main_viewport.camera;
+    std::string state = camera.is_orthographic ? "Orthographic" : "Perspective";
     state = g_is_rending_depth_buffer ? "Depth Buffer" : state;
     DrawText(state.c_str(), 10, 10, 20, YELLOW);
 
@@ -339,8 +307,8 @@ void RenderUI()
     g_wall_column = (int)glm::round(g_wall_x);
     g_wall_row = (int)glm::round(g_wall_y);
     
-    GuiSlider({35, 70, 100, 20}, "Near", TextFormat("%0.1f", g_camera.near_plane), &g_camera.near_plane, 0.1f, 10.0f);
-    GuiSlider({35, 90, 100, 20}, "Far", TextFormat("%0.1f", g_camera.far_plane), &g_camera.far_plane, 10.1f, 20.0f);
+    GuiSlider({35, 70, 100, 20}, "Near", TextFormat("%0.1f", camera.near_plane), &camera.near_plane, 0.1f, 10.0f);
+    GuiSlider({35, 90, 100, 20}, "Far", TextFormat("%0.1f", camera.far_plane), &camera.far_plane, 10.1f, 20.0f);
     DrawRectangleLines(0, 0, (int)g_ui_zone.x, (int)g_ui_zone.y, WHITE);
 
     if(g_is_viewing_performance_metrics)
@@ -360,35 +328,7 @@ void DrawPerformanceMetrics()
     DrawText(TextFormat("Backfacing Triangles: %d", g_backfacing_triangles), 10, 30, font_size, YELLOW);
 }
 
-void DrawMesh()
-{
-    for(int i = 0; i < g_raylib_mesh->triangleCount; ++i)
-    {
-        if(g_raylib_mesh->indices)
-        {
-
-        }
-        else
-        {
-            const int j = i * 9;
-            const ftype x1 = (ftype)g_raylib_mesh->vertices[j];
-            const ftype y1 = (ftype)g_raylib_mesh->vertices[j + 1];
-            const ftype z1 = (ftype)g_raylib_mesh->vertices[j + 2];
-            const ftype x2 = (ftype)g_raylib_mesh->vertices[j + 3];
-            const ftype y2 = (ftype)g_raylib_mesh->vertices[j + 4];
-            const ftype z2 = (ftype)g_raylib_mesh->vertices[j + 5];
-            const ftype x3 = (ftype)g_raylib_mesh->vertices[j + 6];
-            const ftype y3 = (ftype)g_raylib_mesh->vertices[j + 7];
-            const ftype z3 = (ftype)g_raylib_mesh->vertices[j + 8];
-            const Vertex a = {{x1, y1, z1, 1}, {1, 0, 0, 1}, {0, 0}};
-            const Vertex b = {{x2, y2, z2, 1}, {0, 1, 0, 1}, {0, 0}};
-            const Vertex c = {{x3, y3, z3, 1}, {0, 0, 1, 1}, {0, 0}};
-            Draw3dTriangle(a, b, c, g_draw_triangle_edges);
-        }
-    }
-}
-
-void DrawMyWeirdCubes()
+void DrawMyWeirdCubes(Viewport& viewport)
 {
     const Cube cubes[7] = {
         {{0, 0, 0},{1,0,0},{1,1,1}, {1,1,1,1}, 0},
@@ -400,16 +340,16 @@ void DrawMyWeirdCubes()
         {{0, 0, -1.5f},{0,0,1},{0.5f,0.5f,0.5f}, {0,0,1,1}, 1},
     };
     
-    DrawCube(cubes[0]);
-    DrawCube(cubes[1]);
-    DrawCube(cubes[2]);
-    DrawCube(cubes[3]);
-    DrawCube(cubes[4]);
-    DrawCube(cubes[5]);
-    DrawCube(cubes[6]);
+    DrawCube(viewport, cubes[0]);
+    DrawCube(viewport, cubes[1]);
+    DrawCube(viewport, cubes[2]);
+    DrawCube(viewport, cubes[3]);
+    DrawCube(viewport, cubes[4]);
+    DrawCube(viewport, cubes[5]);
+    DrawCube(viewport, cubes[6]);
 }
 
-void DrawCube(const Cube& cube)
+void DrawCube(Viewport& viewport, const Cube& cube)
 {
     const glm::mat4 objectToWorldSpace = TRSMatrix(cube.position, cube.rotation_axis, cube.scale, cube.angular_speed * g_since_start);
     const ftype uv_top_left_x = 1.0f / g_sprite_atlas.width;
@@ -443,38 +383,39 @@ void DrawCube(const Cube& cube)
     // the order is counter clockwise for quads camera is facing and clockwise for quads camera is not facing
 
     // back face
-    DrawQuad(cube_vertices[0], cube_vertices[1], cube_vertices[2], cube_vertices[3], g_draw_triangle_edges);
+    DrawQuad(viewport, cube_vertices[0], cube_vertices[1], cube_vertices[2], cube_vertices[3], g_draw_triangle_edges);
     
     // front face
-    DrawQuad(cube_vertices[7], cube_vertices[6], cube_vertices[5], cube_vertices[4], g_draw_triangle_edges);
+    DrawQuad(viewport, cube_vertices[7], cube_vertices[6], cube_vertices[5], cube_vertices[4], g_draw_triangle_edges);
     
     // top face
-    DrawQuad(cube_vertices[1], cube_vertices[5], cube_vertices[6], cube_vertices[2], g_draw_triangle_edges);
+    DrawQuad(viewport, cube_vertices[1], cube_vertices[5], cube_vertices[6], cube_vertices[2], g_draw_triangle_edges);
     
     // bottom face
-    DrawQuad(cube_vertices[0], cube_vertices[3], cube_vertices[7], cube_vertices[4], g_draw_triangle_edges);
+    DrawQuad(viewport, cube_vertices[0], cube_vertices[3], cube_vertices[7], cube_vertices[4], g_draw_triangle_edges);
     
     // left face
-    DrawQuad(cube_vertices[0], cube_vertices[4], cube_vertices[5], cube_vertices[1], g_draw_triangle_edges);
+    DrawQuad(viewport, cube_vertices[0], cube_vertices[4], cube_vertices[5], cube_vertices[1], g_draw_triangle_edges);
     
     // right face
-    DrawQuad(cube_vertices[2], cube_vertices[6], cube_vertices[7], cube_vertices[3], g_draw_triangle_edges);
+    DrawQuad(viewport, cube_vertices[2], cube_vertices[6], cube_vertices[7], cube_vertices[3], g_draw_triangle_edges);
 }
 
-void DrawAxis(const glm::vec4 position)
+void DrawAxis(const Viewport& viewport, const glm::vec4 position)
 {
     const glm::vec4 x_axis = position + glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
     const glm::vec4 y_axis = position + glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
     const glm::vec4 z_axis = position + glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
 
-    DrawLine3d(position, x_axis, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
-    DrawLine3d(position, y_axis, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
-    DrawLine3d(position, z_axis, glm::vec4(0.0f, 0.0f, 1.0f, 1.0f));
+    DrawLine3d(viewport, position, x_axis, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
+    DrawLine3d(viewport, position, y_axis, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
+    DrawLine3d(viewport, position, z_axis, glm::vec4(0.0f, 0.0f, 1.0f, 1.0f));
 }
 
-void DrawLine3d(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color)
+void DrawLine3d(const Viewport& viewport, const glm::vec4 start, const glm::vec4 end, const glm::vec4 color)
 {
-    const glm::mat4 objectToClipSpace = g_camera.clipToScreenSpace * g_camera.projectionMatrix * g_camera.worldToCameraSpace;
+    const MyCamera& camera = viewport.camera;
+    const glm::mat4 objectToClipSpace = camera.clipToScreenSpace * camera.projectionMatrix * camera.worldToCameraSpace;
 
     glm::vec4 clippedStart = objectToClipSpace * start;
     clippedStart /= clippedStart.w;
@@ -482,15 +423,16 @@ void DrawLine3d(const glm::vec4 start, const glm::vec4 end, const glm::vec4 colo
     glm::vec4 clippedEnd = objectToClipSpace * end;
     clippedEnd /= clippedEnd.w;
 
-    Rasterize3dLine(clippedStart, clippedEnd, color);
+    const Color raylib_color = ColorFromNormalized({color.x, color.y, color.z, color.w});
+    DrawLine((int)clippedStart.x, (int)clippedStart.y, (int)clippedEnd.x, (int)clippedEnd.y, raylib_color);
 }
 
-void DrawColorPixel(const int x, const int y, const ftype z, const glm::vec4 color)
+void DrawColorPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color)
 {
-    DrawPixel(x, y, z, color);
+    DrawPixel(viewport, x, y, z, color);
 }
 
-void DrawTextureSampledPixel(const int x, const int y, const ftype z, const glm::vec2 uv)
+void DrawTextureSampledPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec2 uv)
 {
     glm::mat2 uv_matrix{
         g_sprite_atlas.width, 0,
@@ -501,37 +443,40 @@ void DrawTextureSampledPixel(const int x, const int y, const ftype z, const glm:
     const glm::ivec2 texcoords = uv_matrix * uv;
     const Vector4 color = ColorNormalize(GetImageColor(g_sprite_atlas, texcoords.x % g_sprite_atlas.width, texcoords.y % g_sprite_atlas.height));
 
-    DrawPixel(x, y, z, {color.x, color.y, color.z, color.w});
+    DrawPixel(viewport, x, y, z, {color.x, color.y, color.z, color.w});
 }
 
-void DrawPixel(const int x, const int y, const ftype z, const glm::vec4 color)
+void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color)
 {
+    const int screen_width = viewport.transform.z;
+    const int screen_height = viewport.transform.w;
     const bool is_outside_z_bounds = z < -1 || z > 1;
-    const bool is_outside_screen_bounds = x < 0 || x >= g_screen_width || y < 0 || y >= g_screen_height;
+    const bool is_outside_screen_bounds = x < 0 || x >= screen_width || y < 0 || y >= screen_height;
     if(is_outside_screen_bounds)
     {
         ++g_pixels_outside_screen;
         return;
     }
 
-    const float depth = ColorNormalize(GetImageColor(g_depth_map, x, y)).z;
+    const float depth = ColorNormalize(GetImageColor(viewport.depth_map, x, y)).z;
     if(depth < z)
     {
         ++g_pixels_behind_other_pixels;
         return;
     }
 
-    ImageDrawPixel(&g_depth_map, x, y, ColorFromNormalized({z, z, z, 1.0f}));
+    ImageDrawPixel(&viewport.depth_map, x, y, ColorFromNormalized({z, z, z, 1.0f}));
     DrawPixel(x, y, ColorFromNormalized({color.r, color.g, color.b, color.a}));
 }
 
+/*
 void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color)
 {
     int x1 = (int)start.x;
     int y1 = (int)start.y;
     const int x2 = (int)end.x;
     const int y2 = (int)end.y;
-
+    
     const Color raylib_color = ColorFromNormalized({color.r, color.g, color.b, color.a});
     DrawLine(x1, y1, x2, y2, raylib_color);
     return;
@@ -541,23 +486,23 @@ void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4
     int sy = y1 < y2 ? 1 : -1;
     int err = (dx > dy ? dx : -dy) / 2;
     int e2;
-
+    
     while (true)
     {
         const Color depth = GetImageColor(g_depth_map, x1, y1);
         ImageDrawPixel(&g_depth_map, x1, y1, raylib_color);
         DrawPixel(x1, y1, raylib_color);
         if (x1 == x2 && y1 == y2)
-            break;
-
+        break;
+        
         e2 = err;
-
+        
         if (e2 > -dx)
         {
             err -= dy;
             x1 += sx;
         }
-
+        
         if (e2 < dy)
         {
             err += dx;
@@ -565,12 +510,14 @@ void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4
         }
     }
 }
+*/
 
-void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only)
+void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only)
 {
-    const glm::vec4 a_cam = g_camera.worldToCameraSpace * a.position;
-    const glm::vec4 b_cam = g_camera.worldToCameraSpace * b.position;
-    const glm::vec4 c_cam = g_camera.worldToCameraSpace * c.position;
+    const MyCamera& camera = viewport.camera;
+    const glm::vec4 a_cam = camera.worldToCameraSpace * a.position;
+    const glm::vec4 b_cam = camera.worldToCameraSpace * b.position;
+    const glm::vec4 c_cam = camera.worldToCameraSpace * c.position;
 
     // clip triangles facing away from camera
     const glm::vec3 a_to_b = b_cam - a_cam;
@@ -594,7 +541,7 @@ void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const boo
     //    return;
     //}
 
-    const glm::mat4 cameraToScreenSpace = g_camera.clipToScreenSpace * g_camera.projectionMatrix;
+    const glm::mat4 cameraToScreenSpace = camera.clipToScreenSpace * camera.projectionMatrix;
 
     glm::vec4 a_screen = cameraToScreenSpace * a_cam;
     a_screen /= a_screen.w;
@@ -608,19 +555,21 @@ void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const boo
     const Vertex a1 = {a_screen, a.color, a.uv};
     const Vertex b1 = {b_screen, b.color, b.uv};
     const Vertex c1 = {c_screen, c.color, c.uv};
-    DrawTriangle(a1, b1, c1, edges_only);
+    DrawTriangle(viewport, a1, b1, c1, edges_only);
 }
 
-void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only)
+void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only)
 {
+    const int screen_width = viewport.transform.z;
+    const int screen_height = viewport.transform.w;
     auto min_x = (int)glm::round(glm::min(a.position.x, glm::min(b.position.x, c.position.x)));
     auto max_x = (int)glm::round(glm::max(a.position.x, glm::max(b.position.x, c.position.x)));
     auto min_y = (int)glm::round(glm::min(a.position.y, glm::min(b.position.y, c.position.y)));
     auto max_y = (int)glm::round(glm::max(a.position.y, glm::max(b.position.y, c.position.y)));
-    min_x = glm::clamp<int>(min_x, 0, g_screen_width - 1);
-    max_x = glm::clamp<int>(max_x, 0, g_screen_width - 1);
-    min_y = glm::clamp<int>(min_y, 0, g_screen_height - 1);
-    max_y = glm::clamp<int>(max_y, 0, g_screen_height - 1);
+    min_x = glm::clamp<int>(min_x, 0, screen_width - 1);
+    max_x = glm::clamp<int>(max_x, 0, screen_width - 1);
+    min_y = glm::clamp<int>(min_y, 0, screen_height - 1);
+    max_y = glm::clamp<int>(max_y, 0, screen_height - 1);
     const auto dim_x = max_x - min_x;
     const auto dim_y = max_y - min_y;
     const auto dim = dim_x * dim_y;
@@ -663,19 +612,19 @@ void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool 
         if(edges_only && (glm::epsilonEqual(alpha, 0.0f, epsilon) || glm::epsilonEqual(beta, 0.0f, epsilon) || glm::epsilonEqual(gamma, 0.0f, epsilon)))
         {
             const glm::vec4 white{1.0f, 1.0f, 1.0f, 1.0f};
-            DrawColorPixel(x, y, z, white);
+            DrawColorPixel(viewport, x, y, z, white);
         }
         else
         {
-            DrawTextureSampledPixel(x, y, z, uv);
+            DrawTextureSampledPixel(viewport, x, y, z, uv);
         }
     }
 }
 
-void DrawQuad(const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, const bool edges_only)
+void DrawQuad(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, const bool edges_only)
 {
-    Draw3dTriangle(a, b, c, edges_only);
-    Draw3dTriangle(a, c, d, edges_only);
+    Draw3dTriangle(viewport, a, b, c, edges_only);
+    Draw3dTriangle(viewport, a, c, d, edges_only);
 }
 
 void LogMat4(const char* name, const glm::mat4& m4)
@@ -723,11 +672,12 @@ glm::mat4 TRSMatrix(const glm::vec3 position, const glm::vec3 rotation_axis, con
     return glm::translate(glm::mat4(1.0f), position) * RotationMatrix(rotation_axis, angle) * glm::scale(glm::mat4(1.0f), scale);
 }
 
-glm::mat4 ProjectionMatrix()
+glm::mat4 ProjectionMatrix(const Viewport& viewport)
 {
-    return g_camera.is_orthographic 
-        ? OrthographicProjectionMatrix(g_camera.fov, g_camera.aspect, g_camera.near_plane, g_camera.far_plane) 
-        : PerspectiveProjectionMatrix(g_camera.fov, g_camera.aspect, g_camera.near_plane, g_camera.far_plane);
+    const MyCamera& camera = viewport.camera;
+    return camera.is_orthographic 
+        ? OrthographicProjectionMatrix(camera.fov, camera.aspect, camera.near_plane, camera.far_plane) 
+        : PerspectiveProjectionMatrix(camera.fov, camera.aspect, camera.near_plane, camera.far_plane);
 }
 
 glm::mat4 OrthographicProjectionMatrix(const ftype fov, const ftype aspect, const ftype near, const ftype far)
