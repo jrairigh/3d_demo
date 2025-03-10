@@ -60,6 +60,7 @@ Image g_sprite_atlas;
 Image g_depth_map;
 bool g_is_rending_depth_buffer = false;
 bool g_draw_triangle_edges = false;
+bool g_is_viewing_performance_metrics = false;
 float g_bias = 0.0f;
 float g_wall_x = 0;
 float g_wall_y = 0;
@@ -68,8 +69,10 @@ int g_wall_row = 0;
 glm::vec2 g_ui_zone{175, 175};
 Mesh* g_raylib_mesh;
 Mesh g_raylib_meshes[4];
-int mesh_index;
-int last_mesh_index;
+int g_mesh_index;
+int g_pixels_outside_screen = 0;
+int g_pixels_behind_other_pixels = 0;
+int g_backfacing_triangles = 0;
 
 void InitializeRuntime();
 void InitializeCamera();
@@ -80,6 +83,7 @@ void UpdateCamera(const ftype zoom, const glm::vec2 move);
 void Render();
 void RenderWorld();
 void RenderUI();
+void DrawPerformanceMetrics();
 void DrawMesh();
 void DrawMyWeirdCubes();
 void DrawCube(const Cube& cube);
@@ -91,6 +95,7 @@ void DrawPixel(const int x, const int y, const ftype z, const glm::vec4 color);
 void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color);
 void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only);
 void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only);
+void DrawQuad(const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, const bool edges_only);
 void LogMat4(const char* name, const glm::mat4& m4);
 void Log(const char* format, ...);
 ftype GetSmoothedMouseWheelScroll();
@@ -139,7 +144,7 @@ void InitializeCamera()
     const ftype half_screen_width = g_screen_width * 0.5f;
     const ftype half_screen_height = g_screen_height * 0.5f;
 
-    g_camera.position = glm::vec3(0.0f, 0.0f, -15.0f);
+    g_camera.position = glm::vec3(0.0f, 0.0f, 15.0f);
     g_camera.lookAt = glm::vec3(0.0f, 0.0f, 0.0f);
     g_camera.up = glm::vec3(0.0f, 1.0f, 0.0f);
     g_camera.near_plane = near_plane;
@@ -212,8 +217,8 @@ void Update()
     }
 
     const int pressed = IsKeyPressed(KEY_TAB) ? 1 : 0;
-    mesh_index = (mesh_index + pressed) % 5;
-    g_raylib_mesh = &g_raylib_meshes[mesh_index];
+    g_mesh_index = (g_mesh_index + pressed) % 5;
+    g_raylib_mesh = &g_raylib_meshes[g_mesh_index];
 
     const bool is_wkey_pressed = IsKeyPressed(KEY_W);
     if(is_wkey_pressed & !g_draw_triangle_edges)
@@ -223,6 +228,16 @@ void Update()
     else if(is_wkey_pressed && g_draw_triangle_edges)
     {
         g_draw_triangle_edges = false;
+    }
+
+    const bool is_skey_pressed = IsKeyPressed(KEY_S);
+    if(is_skey_pressed && !g_is_viewing_performance_metrics)
+    {
+        g_is_viewing_performance_metrics = true;
+    }
+    else if(is_skey_pressed && g_is_viewing_performance_metrics)
+    {
+        g_is_viewing_performance_metrics = false;
     }
 
     UpdateCamera(zoom, glm_mouse_delta);
@@ -271,11 +286,16 @@ void UpdateCamera(const ftype zoom, const glm::vec2 move)
 
 void Render()
 {
+    g_backfacing_triangles = 0;
+    g_pixels_outside_screen = 0;
+    g_pixels_behind_other_pixels = 0;
     BeginDrawing();
     ClearBackground(BLACK);
     RenderWorld();
     RenderUI();
     EndDrawing();
+    Log("Pixels outside screen: %d", g_pixels_outside_screen);
+    //Log("Pixels behind other pixels: %d", g_pixels_behind_other_pixels);
 }
 
 void RenderWorld()
@@ -288,38 +308,56 @@ void RenderWorld()
 
     ImageClearBackground(&g_depth_map, WHITE);
 
-    switch(mesh_index)
+    /*
+    switch(g_mesh_index)
     {
-    case 0:
-    case 1:
-    case 2:
-    case 3:
+        case 0:
+        case 1:
+        case 2:
+        case 3:
         DrawMesh();
         break;
-    default:
+        default:
         DrawMyWeirdCubes();
         break;
     }
+    */
+
+    DrawMyWeirdCubes();
 
     DrawAxis(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
 }
 
 void RenderUI()
 {
-    DrawFPS(10, 10);
-
     std::string state = g_camera.is_orthographic ? "Orthographic" : "Perspective";
     state = g_is_rending_depth_buffer ? "Depth Buffer" : state;
-    DrawText(state.c_str(), 10, 30, 20, YELLOW);
+    DrawText(state.c_str(), 10, 10, 20, YELLOW);
 
-    GuiSlider({35, 50, 100, 20}, "Col", TextFormat("%d", g_wall_column), &g_wall_x, 0, 7);
-    GuiSlider({35, 70, 100, 20}, "Row", TextFormat("%d", g_wall_row), &g_wall_y, 0, 14);
+    GuiSlider({35, 30, 100, 20}, "Col", TextFormat("%d", g_wall_column), &g_wall_x, 0, 7);
+    GuiSlider({35, 50, 100, 20}, "Row", TextFormat("%d", g_wall_row), &g_wall_y, 0, 14);
     g_wall_column = (int)glm::round(g_wall_x);
     g_wall_row = (int)glm::round(g_wall_y);
     
-    GuiSlider({35, 90, 100, 20}, "Near", TextFormat("%0.1f", g_camera.near_plane), &g_camera.near_plane, 0.1f, 10.0f);
-    GuiSlider({35, 110, 100, 20}, "Far", TextFormat("%0.1f", g_camera.far_plane), &g_camera.far_plane, 10.1f, 20.0f);
+    GuiSlider({35, 70, 100, 20}, "Near", TextFormat("%0.1f", g_camera.near_plane), &g_camera.near_plane, 0.1f, 10.0f);
+    GuiSlider({35, 90, 100, 20}, "Far", TextFormat("%0.1f", g_camera.far_plane), &g_camera.far_plane, 10.1f, 20.0f);
     DrawRectangleLines(0, 0, (int)g_ui_zone.x, (int)g_ui_zone.y, WHITE);
+
+    if(g_is_viewing_performance_metrics)
+    {
+        DrawPerformanceMetrics();
+    }
+}
+
+void DrawPerformanceMetrics()
+{
+    constexpr int font_size = 20;
+    DrawRectangle(0, 0, (int)g_ui_zone.x, (int)g_ui_zone.y, Fade(BLACK, 0.8f));
+
+    const int fps = GetFPS();
+    DrawText(TextFormat("FPS: %d", fps), 10, 10, font_size, YELLOW);
+
+    DrawText(TextFormat("Backfacing Triangles: %d", g_backfacing_triangles), 10, 30, font_size, YELLOW);
 }
 
 void DrawMesh()
@@ -353,7 +391,7 @@ void DrawMesh()
 void DrawMyWeirdCubes()
 {
     const Cube cubes[7] = {
-        {{0, 0, 0},{1,0,0},{5,1,1}, {1,1,1,1}, 0},
+        {{0, 0, 0},{1,0,0},{1,1,1}, {1,1,1,1}, 0},
         {{1.5f, 0, 0},{1,0,0},{0.5f,0.5f,0.5f}, {1,0,0,1}, 1},
         {{0, 1.5f, 0},{0,1,0},{0.5f,0.5f,0.5f}, {0,1,0,1}, 1},
         {{0, 0, 1.5f},{0,0,1},{0.5f,0.5f,0.5f}, {0,0,1,1}, 1},
@@ -363,12 +401,12 @@ void DrawMyWeirdCubes()
     };
     
     DrawCube(cubes[0]);
-    //DrawCube(cubes[1]);
-    //DrawCube(cubes[2]);
-    //DrawCube(cubes[3]);
-    //DrawCube(cubes[4]);
-    //DrawCube(cubes[5]);
-    //DrawCube(cubes[6]);
+    DrawCube(cubes[1]);
+    DrawCube(cubes[2]);
+    DrawCube(cubes[3]);
+    DrawCube(cubes[4]);
+    DrawCube(cubes[5]);
+    DrawCube(cubes[6]);
 }
 
 void DrawCube(const Cube& cube)
@@ -401,23 +439,26 @@ void DrawCube(const Cube& cube)
     cube_vertices[6].position = objectToWorldSpace * cube_vertices[6].position;
     cube_vertices[7].position = objectToWorldSpace * cube_vertices[7].position;
 
-    Draw3dTriangle(cube_vertices[2], cube_vertices[0], cube_vertices[1], g_draw_triangle_edges);
-    Draw3dTriangle(cube_vertices[3], cube_vertices[0], cube_vertices[2], g_draw_triangle_edges);
+    // the veritices are given assuming the starting camera position in the positive z direction looking at the origin
+    // the order is counter clockwise for quads camera is facing and clockwise for quads camera is not facing
 
-    Draw3dTriangle(cube_vertices[6], cube_vertices[5], cube_vertices[4], g_draw_triangle_edges);
-    Draw3dTriangle(cube_vertices[7], cube_vertices[6], cube_vertices[4], g_draw_triangle_edges);
-
-    Draw3dTriangle(cube_vertices[6], cube_vertices[1], cube_vertices[5], g_draw_triangle_edges);
-    Draw3dTriangle(cube_vertices[1], cube_vertices[6], cube_vertices[2], g_draw_triangle_edges);
-
-    Draw3dTriangle(cube_vertices[7], cube_vertices[4], cube_vertices[0], g_draw_triangle_edges);
-    Draw3dTriangle(cube_vertices[7], cube_vertices[0], cube_vertices[3], g_draw_triangle_edges);
-
-    Draw3dTriangle(cube_vertices[6], cube_vertices[7], cube_vertices[2], g_draw_triangle_edges);
-    Draw3dTriangle(cube_vertices[7], cube_vertices[3], cube_vertices[2], g_draw_triangle_edges);
-
-    Draw3dTriangle(cube_vertices[5], cube_vertices[1], cube_vertices[0], g_draw_triangle_edges);
-    Draw3dTriangle(cube_vertices[5], cube_vertices[0], cube_vertices[4], g_draw_triangle_edges);
+    // back face
+    DrawQuad(cube_vertices[0], cube_vertices[1], cube_vertices[2], cube_vertices[3], g_draw_triangle_edges);
+    
+    // front face
+    DrawQuad(cube_vertices[7], cube_vertices[6], cube_vertices[5], cube_vertices[4], g_draw_triangle_edges);
+    
+    // top face
+    DrawQuad(cube_vertices[1], cube_vertices[5], cube_vertices[6], cube_vertices[2], g_draw_triangle_edges);
+    
+    // bottom face
+    DrawQuad(cube_vertices[0], cube_vertices[3], cube_vertices[7], cube_vertices[4], g_draw_triangle_edges);
+    
+    // left face
+    DrawQuad(cube_vertices[0], cube_vertices[4], cube_vertices[5], cube_vertices[1], g_draw_triangle_edges);
+    
+    // right face
+    DrawQuad(cube_vertices[2], cube_vertices[6], cube_vertices[7], cube_vertices[3], g_draw_triangle_edges);
 }
 
 void DrawAxis(const glm::vec4 position)
@@ -469,12 +510,14 @@ void DrawPixel(const int x, const int y, const ftype z, const glm::vec4 color)
     const bool is_outside_screen_bounds = x < 0 || x >= g_screen_width || y < 0 || y >= g_screen_height;
     if(is_outside_screen_bounds)
     {
+        ++g_pixels_outside_screen;
         return;
     }
 
-    const bool is_not_visible = ColorNormalize(GetImageColor(g_depth_map, x, y)).z < z;
-    if(is_not_visible)
+    const float depth = ColorNormalize(GetImageColor(g_depth_map, x, y)).z;
+    if(depth < z)
     {
+        ++g_pixels_behind_other_pixels;
         return;
     }
 
@@ -525,15 +568,41 @@ void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4
 
 void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only)
 {
-    const glm::mat4 objectToScreenSpace = g_camera.clipToScreenSpace * g_camera.projectionMatrix * g_camera.worldToCameraSpace;
+    const glm::vec4 a_cam = g_camera.worldToCameraSpace * a.position;
+    const glm::vec4 b_cam = g_camera.worldToCameraSpace * b.position;
+    const glm::vec4 c_cam = g_camera.worldToCameraSpace * c.position;
 
-    glm::vec4 a_screen = objectToScreenSpace * a.position;
+    // clip triangles facing away from camera
+    const glm::vec3 a_to_b = b_cam - a_cam;
+    const glm::vec3 a_to_c = c_cam - a_cam;
+    const glm::vec3 normal = glm::cross(a_to_c, a_to_b);
+
+    if(normal.z >= 0)
+    {
+        ++g_backfacing_triangles;
+        return;
+    }
+
+    // clip triangles outside of frustrum
+    //if(a_cam.z < g_camera.near_plane || b_cam.z < g_camera.near_plane || c_cam.z < g_camera.near_plane)
+    //{
+    //    return;
+    //}
+//
+    //if(a_cam.z > g_camera.far_plane || b_cam.z > g_camera.far_plane || c_cam.z > g_camera.far_plane)
+    //{
+    //    return;
+    //}
+
+    const glm::mat4 cameraToScreenSpace = g_camera.clipToScreenSpace * g_camera.projectionMatrix;
+
+    glm::vec4 a_screen = cameraToScreenSpace * a_cam;
     a_screen /= a_screen.w;
 
-    glm::vec4 b_screen = objectToScreenSpace * b.position;
+    glm::vec4 b_screen = cameraToScreenSpace * b_cam;
     b_screen /= b_screen.w;
 
-    glm::vec4 c_screen = objectToScreenSpace * c.position;
+    glm::vec4 c_screen = cameraToScreenSpace * c_cam;
     c_screen /= c_screen.w;
 
     const Vertex a1 = {a_screen, a.color, a.uv};
@@ -544,10 +613,14 @@ void Draw3dTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const boo
 
 void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only)
 {
-    const auto min_x = (int)glm::round(glm::min(a.position.x, glm::min(b.position.x, c.position.x)));
-    const auto max_x = (int)glm::round(glm::max(a.position.x, glm::max(b.position.x, c.position.x)));
-    const auto min_y = (int)glm::round(glm::min(a.position.y, glm::min(b.position.y, c.position.y)));
-    const auto max_y = (int)glm::round(glm::max(a.position.y, glm::max(b.position.y, c.position.y)));
+    auto min_x = (int)glm::round(glm::min(a.position.x, glm::min(b.position.x, c.position.x)));
+    auto max_x = (int)glm::round(glm::max(a.position.x, glm::max(b.position.x, c.position.x)));
+    auto min_y = (int)glm::round(glm::min(a.position.y, glm::min(b.position.y, c.position.y)));
+    auto max_y = (int)glm::round(glm::max(a.position.y, glm::max(b.position.y, c.position.y)));
+    min_x = glm::clamp<int>(min_x, 0, g_screen_width - 1);
+    max_x = glm::clamp<int>(max_x, 0, g_screen_width - 1);
+    min_y = glm::clamp<int>(min_y, 0, g_screen_height - 1);
+    max_y = glm::clamp<int>(max_y, 0, g_screen_height - 1);
     const auto dim_x = max_x - min_x;
     const auto dim_y = max_y - min_y;
     const auto dim = dim_x * dim_y;
@@ -569,12 +642,6 @@ void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool 
         // this is actually parallelogram area, but the ratio is the same between triangles and parallelograms
         // when calculating the barycentric coordinates
         const ftype triangle_area = a_to_c.x * a_to_b.y - a_to_c.y * a_to_b.x;
-        
-        // cull triangles that are facing away from camera (clockwise) or view angle makes it flat
-        if(triangle_area <= 0)
-        {
-            continue;
-        }
         
         // calculate the barycentric coordinates
         const glm::vec2 a_to_p{x - a.position.x, y - a.position.y};
@@ -603,6 +670,12 @@ void DrawTriangle(const Vertex& a, const Vertex& b, const Vertex& c, const bool 
             DrawTextureSampledPixel(x, y, z, uv);
         }
     }
+}
+
+void DrawQuad(const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, const bool edges_only)
+{
+    Draw3dTriangle(a, b, c, edges_only);
+    Draw3dTriangle(a, c, d, edges_only);
 }
 
 void LogMat4(const char* name, const glm::mat4& m4)
