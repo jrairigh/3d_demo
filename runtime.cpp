@@ -10,8 +10,6 @@
 struct Vertex
 {
     glm::vec4 position;
-    glm::vec4 color;
-    glm::vec2 uv;
 };
 
 struct Cube
@@ -24,6 +22,7 @@ struct Cube
 };
 
 Viewport g_main_viewport;
+Viewport g_axis_viewport;
 ftype g_since_start = 0.0f;
 ftype g_frame_time = 0.0f;
 Texture2D g_depth_tex2D;
@@ -46,8 +45,8 @@ void InitializeCamera(Viewport& viewport, const glm::ivec4& transform);
 void RunGame();
 void CloseGame();
 void Update();
-void UpdateCamera(Viewport& viewport, const ftype zoom, const glm::vec2 move);
-void UpdateViewport(Viewport& viewport);
+void UpdateCamera(Viewport& viewport, const ftype zoom, const glm::vec2 move, const glm::vec2 screen_resize_factor);
+void UpdateViewport(Viewport& viewport, const glm::vec2 screen_resize_factor);
 void Render();
 void RenderWorld(Viewport& viewport);
 void RenderUI();
@@ -57,15 +56,17 @@ void DrawCube(Viewport& viewport, const Cube& cube);
 void DrawAxis(const Viewport& viewport, const glm::vec4 position);
 void DrawLine3d(const Viewport& viewport, const glm::vec4 start, const glm::vec4 end, const glm::vec4 color);
 void DrawColorPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color);
-void DrawTextureSampledPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec2 uv);
+void DrawTextureSampledPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec2 uv, const glm::vec4 add_color);
 void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color);
-void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only);
-void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only);
-void DrawQuad(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, const bool edges_only);
+void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only);
+void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only);
+void DrawQuad(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only);
 void LogMat4(const char* name, const glm::mat4& m4);
 void Log(const char* format, ...);
 ftype GetSmoothedMouseWheelScroll();
 glm::vec2 GetSmoothedMouseMove();
+glm::vec2 GetScreenResizeFactor();
+glm::mat4 ClipToScreenSpaceMatrix(const Viewport& viewport);
 glm::mat4 TRSMatrix(const glm::vec3 position,const glm::vec3 rotation_axis,const glm::vec3 scale, const float angle);
 glm::mat4 ProjectionMatrix(const Viewport& viewport);
 glm::mat4 OrthographicProjectionMatrix(const ftype fov, const ftype aspect, const ftype near, const ftype far);
@@ -93,6 +94,7 @@ void InitializeRuntime()
     SetTraceLogLevel(LOG_DEBUG);
 
     InitializeCamera(g_main_viewport, {0, 0, screen_width, screen_height});
+    InitializeCamera(g_axis_viewport, {screen_width - 200, 0, 200, 200});
     SetTargetFPS(60);
 
     g_sprite_atlas = LoadImage("assets/WallpaperAtlas.png");
@@ -100,9 +102,9 @@ void InitializeRuntime()
 
 void InitializeCamera(Viewport& viewport, const glm::ivec4& transform)
 {
-    const ftype near_plane = 5.0f;
+    const ftype near_plane = 0.1f;
     const ftype far_plane = 100.0f;
-    const ftype fov = 20.0f;
+    const ftype fov = 60.0f;
     
     MyCamera& camera = viewport.camera;
     camera.position = glm::vec3(0.0f, 0.0f, 15.0f);
@@ -116,7 +118,7 @@ void InitializeCamera(Viewport& viewport, const glm::ivec4& transform)
     camera.is_orthographic = false;
     
     viewport.transform = transform;
-    UpdateViewport(viewport);
+    UpdateViewport(viewport, {1, 1});
 }
 
 void RunGame()
@@ -154,6 +156,7 @@ void Update()
 {
     const ftype zoom = GetSmoothedMouseWheelScroll();
     const glm::vec2 glm_mouse_delta = GetSmoothedMouseMove();
+    const glm::vec2 screen_resize_factor = GetScreenResizeFactor();
 
     const bool is_zkey_pressed = IsKeyPressed(KEY_Z);
     if(is_zkey_pressed && !g_is_rending_depth_buffer)
@@ -187,15 +190,16 @@ void Update()
         g_is_viewing_performance_metrics = false;
     }
 
-    UpdateCamera(g_main_viewport, zoom, glm_mouse_delta);
+    UpdateCamera(g_main_viewport, zoom, glm_mouse_delta, screen_resize_factor);
+    UpdateCamera(g_axis_viewport, zoom, glm_mouse_delta, screen_resize_factor);
 }
 
-void UpdateCamera(Viewport& viewport, const ftype zoom, const glm::vec2 move)
+void UpdateCamera(Viewport& viewport, const ftype zoom, const glm::vec2 move, const glm::vec2 screen_resize_factor)
 {
     MyCamera& camera = viewport.camera;
-    static ftype last_fov = camera.fov;
-    static ftype last_near = camera.near_plane;
-    static ftype last_far = camera.far_plane;
+    //static ftype last_fov = camera.fov;
+    //static ftype last_near = camera.near_plane;
+    //static ftype last_far = camera.far_plane;
 
     // Min fov at 20 for now so fps doesn't drop too much
     camera.fov += -zoom * camera.zoom_speed;
@@ -210,74 +214,70 @@ void UpdateCamera(Viewport& viewport, const ftype zoom, const glm::vec2 move)
     camera.position += rotation_speed * g_frame_time * move_delta;
     camera.position = length * glm::normalize(camera.position);
     camera.up = glm::cross(right, forward);
-    camera.worldToCameraSpace = LookAt(camera.position, camera.lookAt, camera.up);
 
     bool do_update_projection_matrix = false;
     do_update_projection_matrix = IsKeyPressed(KEY_SPACE);
     camera.is_orthographic = do_update_projection_matrix ? !camera.is_orthographic : camera.is_orthographic;
 
-    do_update_projection_matrix = last_fov != camera.fov || do_update_projection_matrix;
-    last_fov = do_update_projection_matrix ? camera.fov : last_fov;
+    do_update_projection_matrix = viewport.last_fov != camera.fov || do_update_projection_matrix;
+    viewport.last_fov = do_update_projection_matrix ? camera.fov : viewport.last_fov;
 
-    do_update_projection_matrix = last_near != camera.near_plane || do_update_projection_matrix;
-    last_near = do_update_projection_matrix ? camera.near_plane : last_near;
+    do_update_projection_matrix = viewport.last_near_z != camera.near_plane || do_update_projection_matrix;
+    viewport.last_near_z = do_update_projection_matrix ? camera.near_plane : viewport.last_near_z;
 
-    do_update_projection_matrix = last_far != camera.far_plane || do_update_projection_matrix;
-    last_far = do_update_projection_matrix ? camera.far_plane : last_far;
+    do_update_projection_matrix = viewport.last_far_z != camera.far_plane || do_update_projection_matrix;
+    viewport.last_far_z = do_update_projection_matrix ? camera.far_plane : viewport.last_far_z;
 
-    if(do_update_projection_matrix || IsWindowResized())
+    do_update_projection_matrix = move.x != 0 || move.y != 0 || do_update_projection_matrix;
+
+    do_update_projection_matrix = screen_resize_factor.x != 1.0f || screen_resize_factor.y != 1.0f || do_update_projection_matrix;
+
+    if(do_update_projection_matrix)
     {
-        UpdateViewport(viewport);
+        UpdateViewport(viewport, screen_resize_factor);
     }
 }
 
-void UpdateViewport(Viewport& viewport)
+void UpdateViewport(Viewport& viewport, const glm::vec2 screen_resize_factor)
 {
-    viewport.transform.z = GetScreenWidth();
-    viewport.transform.w = GetScreenHeight();
-    const int width = viewport.transform.z;
-    const int height = viewport.transform.w;
+    viewport.transform.z = (ftype)glm::round(viewport.transform.z * screen_resize_factor.x);
+    viewport.transform.w = (ftype)glm::round(viewport.transform.w * screen_resize_factor.y);
+    const ftype width = (ftype)viewport.transform.z;
+    const ftype height = (ftype)viewport.transform.w;
     MyCamera& camera = viewport.camera;
-    const ftype aspect = (ftype)width / (ftype)height;
-    const ftype half_screen_width = width * 0.5f;
-    const ftype half_screen_height = height * 0.5f;
 
-    camera.aspect = aspect;
+    camera.aspect = width / height;
 
     camera.worldToCameraSpace = LookAt(camera.position, camera.lookAt, camera.up);
-    LogMat4("World To Camera", camera.worldToCameraSpace);
+    //LogMat4("World To Camera", camera.worldToCameraSpace);
 
     camera.projectionMatrix = ProjectionMatrix(viewport);
-    LogMat4("Projection", camera.projectionMatrix);
+    //LogMat4("Projection", camera.projectionMatrix);
     
-    camera.clipToScreenSpace = glm::mat4(
-        half_screen_width, 0.0f, 0.0f, 0.0f,
-        0.0f, -half_screen_height, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        half_screen_width, half_screen_height, 0.0f, 1.0f
-    );
-    LogMat4("Clip To Screen", camera.clipToScreenSpace);
+    camera.clipToScreenSpace = ClipToScreenSpaceMatrix(viewport);
+    //LogMat4("Clip To Screen", camera.clipToScreenSpace);
 
     if(IsImageReady(viewport.depth_map))
     {
         UnloadImage(viewport.depth_map);
     }
 
-    viewport.depth_map = GenImageColor(width, height, WHITE);
+    viewport.depth_map = GenImageColor((int)width, (int)height, WHITE);
 }
 
 void Render()
 {
+    // reset performance counters
     g_backfacing_triangles = 0;
     g_pixels_outside_screen = 0;
     g_pixels_behind_other_pixels = 0;
+
     BeginDrawing();
     ClearBackground(BLACK);
     RenderWorld(g_main_viewport);
+    DrawAxis(g_axis_viewport, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
     RenderUI();
     EndDrawing();
-    //Log("Pixels outside screen: %d", g_pixels_outside_screen);
-    //Log("Pixels behind other pixels: %d", g_pixels_behind_other_pixels);
 }
 
 void RenderWorld(Viewport& viewport)
@@ -291,8 +291,6 @@ void RenderWorld(Viewport& viewport)
     ImageClearBackground(&viewport.depth_map, WHITE);
 
     DrawMyWeirdCubes(viewport);
-
-    DrawAxis(viewport, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
 }
 
 void RenderUI()
@@ -307,9 +305,15 @@ void RenderUI()
     g_wall_column = (int)glm::round(g_wall_x);
     g_wall_row = (int)glm::round(g_wall_y);
     
-    GuiSlider({35, 70, 100, 20}, "Near", TextFormat("%0.1f", camera.near_plane), &camera.near_plane, 0.1f, 10.0f);
-    GuiSlider({35, 90, 100, 20}, "Far", TextFormat("%0.1f", camera.far_plane), &camera.far_plane, 10.1f, 20.0f);
+    GuiSlider({35, 70, 100, 20}, "Near", TextFormat("%0.1f", camera.near_plane), &camera.near_plane, 0.1f, 20.0f);
+    GuiSlider({35, 90, 100, 20}, "Far", TextFormat("%0.1f", camera.far_plane), &camera.far_plane, 20.1f, 100.0f);
     DrawRectangleLines(0, 0, (int)g_ui_zone.x, (int)g_ui_zone.y, WHITE);
+
+    glm::vec4 rect = g_main_viewport.transform;
+    DrawRectangleLines((int)rect.x, (int)rect.y, (int)rect.z, (int)rect.w, WHITE);
+
+    rect = g_axis_viewport.transform;
+    DrawRectangleLines((int)rect.x, (int)rect.y, (int)rect.z, (int)rect.w, WHITE);
 
     if(g_is_viewing_performance_metrics)
     {
@@ -341,12 +345,12 @@ void DrawMyWeirdCubes(Viewport& viewport)
     };
     
     DrawCube(viewport, cubes[0]);
-    DrawCube(viewport, cubes[1]);
-    DrawCube(viewport, cubes[2]);
-    DrawCube(viewport, cubes[3]);
-    DrawCube(viewport, cubes[4]);
-    DrawCube(viewport, cubes[5]);
-    DrawCube(viewport, cubes[6]);
+    //DrawCube(viewport, cubes[1]);
+    //DrawCube(viewport, cubes[2]);
+    //DrawCube(viewport, cubes[3]);
+    //DrawCube(viewport, cubes[4]);
+    //DrawCube(viewport, cubes[5]);
+    //DrawCube(viewport, cubes[6]);
 }
 
 void DrawCube(Viewport& viewport, const Cube& cube)
@@ -359,15 +363,22 @@ void DrawCube(Viewport& viewport, const Cube& cube)
     const ftype uv_xOffset = (65.0f / g_sprite_atlas.width) * g_wall_column + uv_top_left_x;
     const ftype uv_yOffset = (65.0f / g_sprite_atlas.height) * g_wall_row + uv_top_left_y;
     Vertex cube_vertices[8] = {
-        // Position        Color          UV
-        {{-1, -1, -1, 1}, {1, 0, 0, 1},   {uv_xOffset, uv_yOffset}},
-        {{-1, 1, -1, 1},  {0, 1, 0, 1},   {uv_xOffset, uv_yOffset + wall_height}},
-        {{1, 1, -1, 1},   {0, 0, 1, 1},   {uv_xOffset + wall_width, uv_yOffset + wall_height}},
-        {{1, -1, -1, 1},  {1, 1, 0, 1},   {uv_xOffset + wall_width, uv_yOffset}},
-        {{-1, -1, 1, 1},  {0, 0, 1, 1},   {uv_xOffset, uv_yOffset}},
-        {{-1, 1, 1, 1},   {1, 1, 0, 1},   {uv_xOffset, uv_yOffset + wall_height}},
-        {{1, 1, 1, 1},    {1, 0, 0, 1},   {uv_xOffset + wall_width, uv_yOffset + wall_height}},
-        {{1, -1, 1, 1},   {0, 1, 0, 1},   {uv_xOffset + wall_width, uv_yOffset}}
+        // Position
+        {{-1, -1, -1, 1}},
+        {{-1, 1, -1, 1}},
+        {{1, 1, -1, 1}},
+        {{1, -1, -1, 1}},
+        {{-1, -1, 1, 1}},
+        {{-1, 1, 1, 1}},
+        {{1, 1, 1, 1}},
+        {{1, -1, 1, 1}}
+    };
+
+    const glm::vec2 uv[4] = {
+        {uv_xOffset, uv_yOffset},
+        {uv_xOffset, uv_yOffset + wall_height},
+        {uv_xOffset + wall_width, uv_yOffset + wall_height},
+        {uv_xOffset + wall_width, uv_yOffset}
     };
 
     cube_vertices[0].position = objectToWorldSpace * cube_vertices[0].position;
@@ -383,22 +394,22 @@ void DrawCube(Viewport& viewport, const Cube& cube)
     // the order is counter clockwise for quads camera is facing and clockwise for quads camera is not facing
 
     // back face
-    DrawQuad(viewport, cube_vertices[0], cube_vertices[1], cube_vertices[2], cube_vertices[3], g_draw_triangle_edges);
+    DrawQuad(viewport, cube_vertices[0], cube_vertices[1], cube_vertices[2], cube_vertices[3], uv, {0,0,0,0}, g_draw_triangle_edges);
     
     // front face
-    DrawQuad(viewport, cube_vertices[7], cube_vertices[6], cube_vertices[5], cube_vertices[4], g_draw_triangle_edges);
+    DrawQuad(viewport, cube_vertices[7], cube_vertices[6], cube_vertices[5], cube_vertices[4], uv, {0,0,0,0}, g_draw_triangle_edges);
     
     // top face
-    DrawQuad(viewport, cube_vertices[1], cube_vertices[5], cube_vertices[6], cube_vertices[2], g_draw_triangle_edges);
+    DrawQuad(viewport, cube_vertices[1], cube_vertices[5], cube_vertices[6], cube_vertices[2], uv, {0,0,0,0}, g_draw_triangle_edges);
     
     // bottom face
-    DrawQuad(viewport, cube_vertices[0], cube_vertices[3], cube_vertices[7], cube_vertices[4], g_draw_triangle_edges);
+    DrawQuad(viewport, cube_vertices[0], cube_vertices[3], cube_vertices[7], cube_vertices[4], uv, {0,0,0,0}, g_draw_triangle_edges);
     
     // left face
-    DrawQuad(viewport, cube_vertices[0], cube_vertices[4], cube_vertices[5], cube_vertices[1], g_draw_triangle_edges);
+    DrawQuad(viewport, cube_vertices[0], cube_vertices[4], cube_vertices[5], cube_vertices[1], uv, {0,0,0,0}, g_draw_triangle_edges);
     
     // right face
-    DrawQuad(viewport, cube_vertices[2], cube_vertices[6], cube_vertices[7], cube_vertices[3], g_draw_triangle_edges);
+    DrawQuad(viewport, cube_vertices[2], cube_vertices[6], cube_vertices[7], cube_vertices[3], uv, {0,0,0,0}, g_draw_triangle_edges);
 }
 
 void DrawAxis(const Viewport& viewport, const glm::vec4 position)
@@ -415,12 +426,12 @@ void DrawAxis(const Viewport& viewport, const glm::vec4 position)
 void DrawLine3d(const Viewport& viewport, const glm::vec4 start, const glm::vec4 end, const glm::vec4 color)
 {
     const MyCamera& camera = viewport.camera;
-    const glm::mat4 objectToClipSpace = camera.clipToScreenSpace * camera.projectionMatrix * camera.worldToCameraSpace;
+    const glm::mat4 objectToScreenSpace = camera.clipToScreenSpace * camera.projectionMatrix * camera.worldToCameraSpace;
 
-    glm::vec4 clippedStart = objectToClipSpace * start;
+    glm::vec4 clippedStart = objectToScreenSpace * start;
     clippedStart /= clippedStart.w;
 
-    glm::vec4 clippedEnd = objectToClipSpace * end;
+    glm::vec4 clippedEnd = objectToScreenSpace * end;
     clippedEnd /= clippedEnd.w;
 
     const Color raylib_color = ColorFromNormalized({color.x, color.y, color.z, color.w});
@@ -432,9 +443,9 @@ void DrawColorPixel(Viewport& viewport, const int x, const int y, const ftype z,
     DrawPixel(viewport, x, y, z, color);
 }
 
-void DrawTextureSampledPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec2 uv)
+void DrawTextureSampledPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec2 uv, const glm::vec4 add_color)
 {
-    glm::mat2 uv_matrix{
+    const glm::mat2 uv_matrix{
         g_sprite_atlas.width, 0,
         0, g_sprite_atlas.height
     };
@@ -443,7 +454,7 @@ void DrawTextureSampledPixel(Viewport& viewport, const int x, const int y, const
     const glm::ivec2 texcoords = uv_matrix * uv;
     const Vector4 color = ColorNormalize(GetImageColor(g_sprite_atlas, texcoords.x % g_sprite_atlas.width, texcoords.y % g_sprite_atlas.height));
 
-    DrawPixel(viewport, x, y, z, {color.x, color.y, color.z, color.w});
+    DrawPixel(viewport, x, y, z, {color.x + add_color.x, color.y + add_color.y, color.z + add_color.z, color.w + add_color.w});
 }
 
 void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color)
@@ -469,50 +480,7 @@ void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, cons
     DrawPixel(x, y, ColorFromNormalized({color.r, color.g, color.b, color.a}));
 }
 
-/*
-void Rasterize3dLine(const glm::vec4 start, const glm::vec4 end, const glm::vec4 color)
-{
-    int x1 = (int)start.x;
-    int y1 = (int)start.y;
-    const int x2 = (int)end.x;
-    const int y2 = (int)end.y;
-    
-    const Color raylib_color = ColorFromNormalized({color.r, color.g, color.b, color.a});
-    DrawLine(x1, y1, x2, y2, raylib_color);
-    return;
-    int dx = glm::abs(x2 - x1);
-    int dy = glm::abs(y2 - y1);
-    int sx = x1 < x2 ? 1 : -1;
-    int sy = y1 < y2 ? 1 : -1;
-    int err = (dx > dy ? dx : -dy) / 2;
-    int e2;
-    
-    while (true)
-    {
-        const Color depth = GetImageColor(g_depth_map, x1, y1);
-        ImageDrawPixel(&g_depth_map, x1, y1, raylib_color);
-        DrawPixel(x1, y1, raylib_color);
-        if (x1 == x2 && y1 == y2)
-        break;
-        
-        e2 = err;
-        
-        if (e2 > -dx)
-        {
-            err -= dy;
-            x1 += sx;
-        }
-        
-        if (e2 < dy)
-        {
-            err += dx;
-            y1 += sy;
-        }
-    }
-}
-*/
-
-void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only)
+void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
 {
     const MyCamera& camera = viewport.camera;
     const glm::vec4 a_cam = camera.worldToCameraSpace * a.position;
@@ -552,13 +520,13 @@ void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const 
     glm::vec4 c_screen = cameraToScreenSpace * c_cam;
     c_screen /= c_screen.w;
 
-    const Vertex a1 = {a_screen, a.color, a.uv};
-    const Vertex b1 = {b_screen, b.color, b.uv};
-    const Vertex c1 = {c_screen, c.color, c.uv};
-    DrawTriangle(viewport, a1, b1, c1, edges_only);
+    const Vertex a1 = {a_screen};
+    const Vertex b1 = {b_screen};
+    const Vertex c1 = {c_screen};
+    DrawTriangle(viewport, a1, b1, c1, uv, add_color, edges_only);
 }
 
-void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const bool edges_only)
+void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
 {
     const int screen_width = viewport.transform.z;
     const int screen_height = viewport.transform.w;
@@ -605,8 +573,6 @@ void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Ve
         }
 
         const ftype z = gamma * a.position.z + alpha * c.position.z + beta * b.position.z;
-        const glm::vec4 color = gamma * a.color + alpha * c.color + beta * b.color;
-        const glm::vec2 uv = gamma * a.uv + alpha * c.uv + beta * b.uv;
 
         const ftype epsilon = 0.01f;
         if(edges_only && (glm::epsilonEqual(alpha, 0.0f, epsilon) || glm::epsilonEqual(beta, 0.0f, epsilon) || glm::epsilonEqual(gamma, 0.0f, epsilon)))
@@ -616,15 +582,17 @@ void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Ve
         }
         else
         {
-            DrawTextureSampledPixel(viewport, x, y, z, uv);
+            DrawTextureSampledPixel(viewport, x, y, z, gamma * uv[0] + alpha * uv[2] + beta * uv[1], add_color);
         }
     }
 }
 
-void DrawQuad(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, const bool edges_only)
+void DrawQuad(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
 {
-    Draw3dTriangle(viewport, a, b, c, edges_only);
-    Draw3dTriangle(viewport, a, c, d, edges_only);
+    const glm::vec2 tri1_uvs[3] = {uv[2], uv[3], uv[0]};
+    const glm::vec2 tri2_uvs[3] = {uv[2], uv[0], uv[1]};
+    Draw3dTriangle(viewport, a, b, c, tri1_uvs, add_color, edges_only);
+    Draw3dTriangle(viewport, a, c, d, tri2_uvs, add_color, edges_only);
 }
 
 void LogMat4(const char* name, const glm::mat4& m4)
@@ -665,6 +633,30 @@ glm::vec2 GetSmoothedMouseMove()
     const glm::vec2 glm_delta = {-mouse_delta.x, mouse_delta.y};
     const Vector2 position = GetMousePosition();
     return position.x < g_ui_zone.x && position.y < g_ui_zone.y ? glm::vec2{0.0f, 0.0f} : glm_delta;
+}
+
+glm::vec2 GetScreenResizeFactor()
+{
+    static int last_screen_width = GetScreenWidth();
+    static int last_screen_height = GetScreenHeight();
+    const ftype width_change_factor = GetScreenWidth() / (ftype)last_screen_width;
+    const ftype height_change_factor = GetScreenHeight() / (ftype)last_screen_height;
+    last_screen_width = GetScreenWidth();
+    last_screen_height = GetScreenHeight();
+    return {width_change_factor, height_change_factor};
+}
+
+glm::mat4 ClipToScreenSpaceMatrix(const Viewport& viewport)
+{
+    const ftype x = (ftype)viewport.transform.x;
+    const ftype y = (ftype)viewport.transform.y;
+    const ftype viewport_half_width = viewport.transform.z * 0.5f;
+    const ftype viewport_half_height = viewport.transform.w * 0.5f;
+    const glm::vec4 column1{viewport_half_width, 0, 0, 0};
+    const glm::vec4 column2{0, -viewport_half_height, 0, 0};
+    const glm::vec4 column3{0, 0, 1, 0};
+    const glm::vec4 column4{x + viewport_half_width, y + viewport_half_height, 0, 1};
+    return Mat4(column1, column2, column3, column4);
 }
 
 glm::mat4 TRSMatrix(const glm::vec3 position, const glm::vec3 rotation_axis, const glm::vec3 scale, const float angle)

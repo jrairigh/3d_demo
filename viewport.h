@@ -33,4 +33,7 @@ struct Viewport
     MyCamera camera;
     glm::ivec4 transform; // x, y, width, height
     Image depth_map;
+    ftype last_fov;
+    ftype last_near_z;
+    ftype last_far_z;
 };
