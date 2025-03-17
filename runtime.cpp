@@ -21,6 +21,14 @@ struct Cube
     float angular_speed;
 };
 
+struct DirectionalLight
+{
+    glm::vec3 direction;
+    glm::vec4 color;
+    ftype intensity;
+};
+
+DirectionalLight g_main_light;
 Viewport g_main_viewport;
 Viewport g_axis_viewport;
 ftype g_since_start = 0.0f;
@@ -32,10 +40,10 @@ bool g_draw_triangle_edges = false;
 bool g_is_viewing_performance_metrics = false;
 float g_bias = 0.0f;
 float g_wall_x = 0;
-float g_wall_y = 0;
+float g_wall_y = 10;
 int g_wall_column = 0;
 int g_wall_row = 0;
-glm::vec2 g_ui_zone{175, 175};
+glm::vec2 g_ui_zone{175, 220};
 int g_pixels_outside_screen = 0;
 int g_pixels_behind_other_pixels = 0;
 int g_backfacing_triangles = 0;
@@ -98,13 +106,17 @@ void InitializeRuntime()
     SetTargetFPS(60);
 
     g_sprite_atlas = LoadImage("assets/WallpaperAtlas.png");
+
+    g_main_light.direction = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
+    g_main_light.color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    g_main_light.intensity = 1.0f;
 }
 
 void InitializeCamera(Viewport& viewport, const glm::ivec4& transform)
 {
-    const ftype near_plane = 0.1f;
+    const ftype near_plane = 4.5f;
     const ftype far_plane = 100.0f;
-    const ftype fov = 60.0f;
+    const ftype fov = 20.0f;
     
     MyCamera& camera = viewport.camera;
     camera.position = glm::vec3(0.0f, 0.0f, 15.0f);
@@ -309,6 +321,13 @@ void RenderUI()
     GuiSlider({35, 90, 100, 20}, "Far", TextFormat("%0.1f", camera.far_plane), &camera.far_plane, 20.1f, 100.0f);
     DrawRectangleLines(0, 0, (int)g_ui_zone.x, (int)g_ui_zone.y, WHITE);
 
+    static Vector3 light_color = {1, 0, 1};
+    GuiColorPickerHSV({35, 110, 100, 100}, "Light Color", &light_color);
+    const Vector3 color = ConvertHSVtoRGB(light_color);
+    g_main_light.color.r = color.x;
+    g_main_light.color.g = color.y;
+    g_main_light.color.b = color.z;
+
     glm::vec4 rect = g_main_viewport.transform;
     DrawRectangleLines((int)rect.x, (int)rect.y, (int)rect.z, (int)rect.w, WHITE);
 
@@ -334,6 +353,7 @@ void DrawPerformanceMetrics()
 
 void DrawMyWeirdCubes(Viewport& viewport)
 {
+    /*
     const Cube cubes[7] = {
         {{0, 0, 0},{1,0,0},{1,1,1}, {1,1,1,1}, 0},
         {{1.5f, 0, 0},{1,0,0},{0.5f,0.5f,0.5f}, {1,0,0,1}, 1},
@@ -342,6 +362,17 @@ void DrawMyWeirdCubes(Viewport& viewport)
         {{-1.5f, 0, 0},{1,0,0},{0.5f,0.5f,0.5f}, {1,0,0,1}, 1},
         {{0, -1.5f, 0},{0,1,0},{0.5f,0.5f,0.5f}, {0,1,0,1}, 1},
         {{0, 0, -1.5f},{0,0,1},{0.5f,0.5f,0.5f}, {0,0,1,1}, 1},
+    };
+    */
+    
+    const Cube cubes[7] = {
+        {{0, 0, 0},{1,0,0},{1,1,1}, {1,1,1,1}, 0},
+        {{2, 0, 0},{1,0,0},{1,1,1}, {1,0,0,1}, 0},
+        {{4, 0, 0},{0,1,0},{1,1,1}, {0,1,0,1}, 0},
+        {{6, 0, 0},{0,0,1},{1,1,1}, {0,0,1,1}, 0},
+        {{8, 0, 0},{1,0,0},{1,1,1}, {1,0,0,1}, 0},
+        {{10, 0, 0},{0,1,0},{1,1,1}, {0,1,0,1}, 0},
+        {{12, 0, 0},{0,0,1},{1,1,1}, {0,0,1,1}, 0},
     };
     
     DrawCube(viewport, cubes[0]);
@@ -445,16 +476,17 @@ void DrawColorPixel(Viewport& viewport, const int x, const int y, const ftype z,
 
 void DrawTextureSampledPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec2 uv, const glm::vec4 add_color)
 {
-    const glm::mat2 uv_matrix{
+    static const glm::mat2 uv_matrix{
         g_sprite_atlas.width, 0,
         0, g_sprite_atlas.height
     };
 
     // affine texture mapping (creates the wobbly textures characteristic of PS1 games)
     const glm::ivec2 texcoords = uv_matrix * uv;
-    const Vector4 color = ColorNormalize(GetImageColor(g_sprite_atlas, texcoords.x % g_sprite_atlas.width, texcoords.y % g_sprite_atlas.height));
+    const Vector4 texture_color = ColorNormalize(GetImageColor(g_sprite_atlas, texcoords.x % g_sprite_atlas.width, texcoords.y % g_sprite_atlas.height));
+    const glm::vec4 final_color = {texture_color.x * add_color.x, texture_color.y * add_color.y, texture_color.z * add_color.z, texture_color.w};
 
-    DrawPixel(viewport, x, y, z, {color.x + add_color.x, color.y + add_color.y, color.z + add_color.z, color.w + add_color.w});
+    DrawPixel(viewport, x, y, z, final_color);
 }
 
 void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color)
@@ -520,10 +552,14 @@ void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const 
     glm::vec4 c_screen = cameraToScreenSpace * c_cam;
     c_screen /= c_screen.w;
 
+    const auto facingLightFactor = glm::clamp<ftype>(-glm::dot(g_main_light.direction, normal), 0.2f, 1);
+    glm::vec4 light_color = facingLightFactor * g_main_light.color;
+    light_color.a = 1.0f;
+
     const Vertex a1 = {a_screen};
     const Vertex b1 = {b_screen};
     const Vertex c1 = {c_screen};
-    DrawTriangle(viewport, a1, b1, c1, uv, add_color, edges_only);
+    DrawTriangle(viewport, a1, b1, c1, uv, light_color, edges_only);
 }
 
 void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
