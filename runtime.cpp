@@ -53,6 +53,7 @@ void InitializeCamera(Viewport& viewport, const glm::ivec4& transform);
 void RunGame();
 void CloseGame();
 void Update();
+void UpdateLight(DirectionalLight& light, const glm::vec2 move);
 void UpdateCamera(Viewport& viewport, const ftype zoom, const glm::vec2 move, const glm::vec2 screen_resize_factor);
 void UpdateViewport(Viewport& viewport, const glm::vec2 screen_resize_factor);
 void Render();
@@ -72,7 +73,7 @@ void DrawQuad(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex
 void LogMat4(const char* name, const glm::mat4& m4);
 void Log(const char* format, ...);
 ftype GetSmoothedMouseWheelScroll();
-glm::vec2 GetSmoothedMouseMove();
+glm::vec2 GetSmoothedMouseMove(const int button);
 glm::vec2 GetScreenResizeFactor();
 glm::mat4 ClipToScreenSpaceMatrix(const Viewport& viewport);
 glm::mat4 TRSMatrix(const glm::vec3 position,const glm::vec3 rotation_axis,const glm::vec3 scale, const float angle);
@@ -167,7 +168,8 @@ void CloseGame()
 void Update()
 {
     const ftype zoom = GetSmoothedMouseWheelScroll();
-    const glm::vec2 glm_mouse_delta = GetSmoothedMouseMove();
+    const glm::vec2 left_mouse_delta = GetSmoothedMouseMove(MOUSE_LEFT_BUTTON);
+    const glm::vec2 right_mouse_delta = GetSmoothedMouseMove(MOUSE_RIGHT_BUTTON);
     const glm::vec2 screen_resize_factor = GetScreenResizeFactor();
 
     const bool is_zkey_pressed = IsKeyPressed(KEY_Z);
@@ -202,8 +204,20 @@ void Update()
         g_is_viewing_performance_metrics = false;
     }
 
-    UpdateCamera(g_main_viewport, zoom, glm_mouse_delta, screen_resize_factor);
-    UpdateCamera(g_axis_viewport, zoom, glm_mouse_delta, screen_resize_factor);
+    UpdateLight(g_main_light, right_mouse_delta);
+    UpdateCamera(g_main_viewport, zoom, left_mouse_delta, screen_resize_factor);
+    UpdateCamera(g_axis_viewport, zoom, left_mouse_delta, screen_resize_factor);
+}
+
+void UpdateLight(DirectionalLight& light, const glm::vec2 move)
+{
+    const ftype rotation_speed = 0.5f;
+    const ftype length = glm::length(light.direction);
+    const glm::vec3 forward = glm::normalize(light.direction);
+    const glm::vec3 right = glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::vec3 move_delta = right * move.x + glm::vec3(0.0f, 1.0f, 0.0f) * move.y;
+    light.direction += rotation_speed * g_frame_time * move_delta;
+    light.direction = length * glm::normalize(light.direction);
 }
 
 void UpdateCamera(Viewport& viewport, const ftype zoom, const glm::vec2 move, const glm::vec2 screen_resize_factor)
@@ -663,9 +677,9 @@ ftype GetSmoothedMouseWheelScroll()
     return avg_zoom * g_frame_time;
 }
 
-glm::vec2 GetSmoothedMouseMove()
+glm::vec2 GetSmoothedMouseMove(const int button)
 {
-    const Vector2 mouse_delta = IsMouseButtonDown(MOUSE_LEFT_BUTTON) ? GetMouseDelta() : Vector2{0.0f, 0.0f};
+    const Vector2 mouse_delta = IsMouseButtonDown(button) ? GetMouseDelta() : Vector2{0.0f, 0.0f};
     const glm::vec2 glm_delta = {-mouse_delta.x, mouse_delta.y};
     const Vector2 position = GetMousePosition();
     return position.x < g_ui_zone.x && position.y < g_ui_zone.y ? glm::vec2{0.0f, 0.0f} : glm_delta;

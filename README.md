@@ -3,12 +3,14 @@ An entirely CPU based 3d renderer with these features:
 - Orthographic and perspective projections
 - Depth buffer
 - Affine and perspective correct texture mapping
+- Directional light
 - Optimizations:
   - Culling triangles outside of view frustrum and facing away from camera
 
 ## How to Use
 - Mouse wheel zooms in/out
 - Left click and drag rotates camera around origin
+- Right click and drag rotates the scene directional light
 - Space bar changes between orthographic and perspective projection
 - Z key draws the depth buffer to the screen
 - W key draws the triangles of the meshes
