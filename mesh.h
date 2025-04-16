@@ -79,10 +79,10 @@ public:
     int normal_count() const { return m_normal_count; }
     int uv_count() const { return m_uv_count; }
     int triangle_count() const { return m_triangle_count; }
-    float* get_vertices() { return vertices; }
-    float* get_normals() { return normals; }
-    float* get_uvs() { return uvs; }
-    unsigned int* get_indices() { return indices; }
+    float* get_vertices() const { return vertices; }
+    float* get_normals() const { return normals; }
+    float* get_uvs() const { return uvs; }
+    unsigned int* get_indices() const { return indices; }
 
 private:
     float* vertices = nullptr;

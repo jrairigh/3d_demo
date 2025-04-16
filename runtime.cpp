@@ -64,6 +64,7 @@ void Render();
 void RenderWorld(Viewport& viewport);
 void RenderUI();
 void DrawPerformanceMetrics();
+void DrawMyMesh(Viewport& viewport, const MyMesh& mesh);
 void DrawMyWeirdCubes(Viewport& viewport);
 void DrawCube(Viewport& viewport, const Cube& cube);
 void DrawAxis(const Viewport& viewport, const glm::vec4 position);
@@ -111,7 +112,7 @@ void InitializeRuntime()
     SetTargetFPS(60);
 
     g_sprite_atlas = LoadImage("assets/WallpaperAtlas.png");
-    g_mesh = ParseObjFile("assets/Cube.obj");
+    g_mesh = ParseObjFile("assets/Suzanne.obj");
 
     g_main_light.direction = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
     g_main_light.color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -362,7 +363,7 @@ void RenderWorld(Viewport& viewport)
     ImageClearBackground(&viewport.z_buffer, WHITE);
     ImageClearBackground(&viewport.color_buffer, BLACK);
 
-    DrawMyWeirdCubes(viewport);
+    DrawMyMesh(viewport, g_mesh);
     UpdateTexture(viewport.color_tex2d, viewport.color_buffer.data);
     DrawTexture(viewport.color_tex2d, 0, 0, WHITE);
 }
@@ -411,6 +412,31 @@ void DrawPerformanceMetrics()
     DrawText(TextFormat("FPS: %d", fps), 10, 10, font_size, YELLOW);
 
     DrawText(TextFormat("Backfacing Triangles: %d", g_backfacing_triangles), 10, 30, font_size, YELLOW);
+    DrawText(TextFormat("Pixels Out-of-bounds: %d", g_pixels_outside_screen), 10, 50, font_size, YELLOW);
+
+}
+
+void DrawMyMesh(Viewport& viewport, const MyMesh& mesh)
+{
+    const glm::vec4 light_color{0, 0, 0, 0};
+    unsigned int* indices = mesh.get_indices();
+    float* vertices = mesh.get_vertices();
+    for(int i = 0; i < mesh.triangle_count(); ++i)
+    {
+        Vertex a{{}}, b{{}}, c{{}};
+        Vertex* vs[] = {&a, &b, &c};
+        for(int k = 0; k < 3; ++k)
+        {
+            Vertex* v = vs[k];
+            int j = indices[i * 3 + k];
+            float x = vertices[j * 3 + 0];
+            float y = vertices[j * 3 + 1];
+            float z = vertices[j * 3 + 2];
+            v->position = {x, y, z, 1.0f};
+        }
+
+        Draw3dTriangle(viewport, a, b, c, nullptr, light_color, g_draw_triangle_edges);
+    }
 }
 
 void DrawMyWeirdCubes(Viewport& viewport)
@@ -678,9 +704,13 @@ void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Ve
             const glm::vec4 white{1.0f, 1.0f, 1.0f, 1.0f};
             DrawColorPixel(viewport, x, y, z, white);
         }
-        else
+        else if(uv)
         {
             DrawTextureSampledPixel(viewport, x, y, z, gamma * uv[0] + alpha * uv[2] + beta * uv[1], add_color);
+        }
+        else
+        {
+            DrawColorPixel(viewport, x, y, z, add_color);
         }
     }
 }
