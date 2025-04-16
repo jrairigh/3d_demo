@@ -7,7 +7,6 @@
 #include "glm/gtc/epsilon.hpp"
 
 #include "raylib.h"
-#include "raymath.h"
 
 typedef float ftype;
 
@@ -32,7 +31,10 @@ struct Viewport
 {
     MyCamera camera;
     glm::ivec4 transform; // x, y, width, height
-    Image depth_map;
+    Image z_buffer;
+    Texture2D z_tex2d;
+    Image color_buffer;
+    Texture2D color_tex2d;
     ftype last_fov;
     ftype last_near_z;
     ftype last_far_z;

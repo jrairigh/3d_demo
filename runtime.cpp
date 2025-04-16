@@ -1,5 +1,7 @@
 #include "viewport.h"
 
+#include "raymath.h"
+
 #define RAYGUI_IMPLEMENTATION
 #include "raygui_enums.h"
 #include "raygui.h"
@@ -33,7 +35,6 @@ Viewport g_main_viewport;
 Viewport g_axis_viewport;
 ftype g_since_start = 0.0f;
 ftype g_frame_time = 0.0f;
-Texture2D g_depth_tex2D;
 Image g_sprite_atlas;
 bool g_is_rending_depth_buffer = false;
 bool g_draw_triangle_edges = false;
@@ -56,6 +57,7 @@ void Update();
 void UpdateLight(DirectionalLight& light, const glm::vec2 move);
 void UpdateCamera(Viewport& viewport, const ftype zoom, const glm::vec2 move, const glm::vec2 screen_resize_factor);
 void UpdateViewport(Viewport& viewport, const glm::vec2 screen_resize_factor);
+void ReloadBuffers(Viewport& viewport, const ftype width, const ftype height);
 void Render();
 void RenderWorld(Viewport& viewport);
 void RenderUI();
@@ -131,6 +133,7 @@ void InitializeCamera(Viewport& viewport, const glm::ivec4& transform)
     camera.is_orthographic = false;
     
     viewport.transform = transform;
+    ReloadBuffers(viewport, (ftype)transform.z, (ftype)transform.w);
     UpdateViewport(viewport, {1, 1});
 }
 
@@ -147,19 +150,33 @@ void RunGame()
 
 void CloseGame()
 {
-    if(IsImageReady(g_main_viewport.depth_map))
-    {
-        UnloadImage(g_main_viewport.depth_map);
-    }
-
     if(IsImageReady(g_sprite_atlas))
     {
         UnloadImage(g_sprite_atlas);
     }
 
-    if(IsTextureReady(g_depth_tex2D))
+    Viewport viewports[] = {g_main_viewport, g_axis_viewport};
+    for(auto& viewport : viewports)
     {
-        UnloadTexture(g_depth_tex2D);
+        if(IsImageReady(viewport.color_buffer))
+        {
+            UnloadImage(viewport.color_buffer);
+        }
+    
+        if(IsTextureReady(viewport.color_tex2d))
+        {
+            UnloadTexture(viewport.color_tex2d);
+        }
+    
+        if(IsImageReady(viewport.z_buffer))
+        {
+            UnloadImage(viewport.z_buffer);
+        }
+    
+        if(IsTextureReady(viewport.z_tex2d))
+        {
+            UnloadTexture(viewport.z_tex2d);
+        }
     }
 
     CloseWindow();
@@ -176,12 +193,11 @@ void Update()
     if(is_zkey_pressed && !g_is_rending_depth_buffer)
     {
         g_is_rending_depth_buffer = true;
-        g_depth_tex2D = LoadTextureFromImage(g_main_viewport.depth_map);
+        UpdateTexture(g_main_viewport.z_tex2d, g_main_viewport.z_buffer.data);
     }
     else if(is_zkey_pressed && g_is_rending_depth_buffer)
     {
         g_is_rending_depth_buffer = false;
-        UnloadTexture(g_depth_tex2D);
     }
 
     const bool is_wkey_pressed = IsKeyPressed(KEY_W);
@@ -223,9 +239,6 @@ void UpdateLight(DirectionalLight& light, const glm::vec2 move)
 void UpdateCamera(Viewport& viewport, const ftype zoom, const glm::vec2 move, const glm::vec2 screen_resize_factor)
 {
     MyCamera& camera = viewport.camera;
-    //static ftype last_fov = camera.fov;
-    //static ftype last_near = camera.near_plane;
-    //static ftype last_far = camera.far_plane;
 
     // Min fov at 20 for now so fps doesn't drop too much
     camera.fov += -zoom * camera.zoom_speed;
@@ -283,12 +296,41 @@ void UpdateViewport(Viewport& viewport, const glm::vec2 screen_resize_factor)
     camera.clipToScreenSpace = ClipToScreenSpaceMatrix(viewport);
     //LogMat4("Clip To Screen", camera.clipToScreenSpace);
 
-    if(IsImageReady(viewport.depth_map))
+    if(screen_resize_factor.x == 1.0f || screen_resize_factor.y == 1.0f)
     {
-        UnloadImage(viewport.depth_map);
+        // only reload the z_buffer and color_buffer if the screen size has changed
+        return;
     }
 
-    viewport.depth_map = GenImageColor((int)width, (int)height, WHITE);
+    ReloadBuffers(viewport, width, height);
+}
+
+void ReloadBuffers(Viewport& viewport, const ftype width, const ftype height)
+{
+    if(IsImageReady(viewport.z_buffer))
+    {
+        UnloadImage(viewport.z_buffer);
+    }
+
+    if(IsTextureReady(viewport.z_tex2d))
+    {
+        UnloadTexture(viewport.z_tex2d);
+    }
+    
+    if(IsImageReady(viewport.color_buffer))
+    {
+        UnloadImage(viewport.color_buffer);
+    }
+    
+    if(IsTextureReady(viewport.color_tex2d))
+    {
+        UnloadTexture(viewport.color_tex2d);
+    }
+    
+    viewport.z_buffer = GenImageColor((int)width, (int)height, WHITE);
+    viewport.z_tex2d = LoadTextureFromImage(viewport.z_buffer);
+    viewport.color_buffer = GenImageColor((int)width, (int)height, BLACK);
+    viewport.color_tex2d = LoadTextureFromImage(viewport.color_buffer);
 }
 
 void Render()
@@ -310,13 +352,16 @@ void RenderWorld(Viewport& viewport)
 {
     if(g_is_rending_depth_buffer)
     {
-        DrawTexture(g_depth_tex2D, 0, 0, WHITE);
+        DrawTexture(viewport.z_tex2d, 0, 0, WHITE);
         return;
     }
 
-    ImageClearBackground(&viewport.depth_map, WHITE);
+    ImageClearBackground(&viewport.z_buffer, WHITE);
+    ImageClearBackground(&viewport.color_buffer, BLACK);
 
     DrawMyWeirdCubes(viewport);
+    UpdateTexture(viewport.color_tex2d, viewport.color_buffer.data);
+    DrawTexture(viewport.color_tex2d, 0, 0, WHITE);
 }
 
 void RenderUI()
@@ -515,15 +560,15 @@ void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, cons
         return;
     }
 
-    const float depth = ColorNormalize(GetImageColor(viewport.depth_map, x, y)).z;
+    const float depth = ColorNormalize(GetImageColor(viewport.z_buffer, x, y)).z;
     if(depth < z)
     {
         ++g_pixels_behind_other_pixels;
         return;
     }
 
-    ImageDrawPixel(&viewport.depth_map, x, y, ColorFromNormalized({z, z, z, 1.0f}));
-    DrawPixel(x, y, ColorFromNormalized({color.r, color.g, color.b, color.a}));
+    ImageDrawPixel(&viewport.z_buffer, x, y, ColorFromNormalized({z, z, z, 1.0f}));
+    ImageDrawPixel(&viewport.color_buffer, x, y, ColorFromNormalized({color.r, color.g, color.b, color.a}));
 }
 
 void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
