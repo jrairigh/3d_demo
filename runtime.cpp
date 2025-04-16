@@ -1,3 +1,4 @@
+#include "mesh.h"
 #include "viewport.h"
 
 #include "raymath.h"
@@ -30,6 +31,7 @@ struct DirectionalLight
     ftype intensity;
 };
 
+MyMesh g_mesh;
 DirectionalLight g_main_light;
 Viewport g_main_viewport;
 Viewport g_axis_viewport;
@@ -109,6 +111,7 @@ void InitializeRuntime()
     SetTargetFPS(60);
 
     g_sprite_atlas = LoadImage("assets/WallpaperAtlas.png");
+    g_mesh = ParseObjFile("assets/Cube.obj");
 
     g_main_light.direction = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
     g_main_light.color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -412,7 +415,6 @@ void DrawPerformanceMetrics()
 
 void DrawMyWeirdCubes(Viewport& viewport)
 {
-    /*
     const Cube cubes[7] = {
         {{0, 0, 0},{1,0,0},{1,1,1}, {1,1,1,1}, 0},
         {{1.5f, 0, 0},{1,0,0},{0.5f,0.5f,0.5f}, {1,0,0,1}, 1},
@@ -422,8 +424,8 @@ void DrawMyWeirdCubes(Viewport& viewport)
         {{0, -1.5f, 0},{0,1,0},{0.5f,0.5f,0.5f}, {0,1,0,1}, 1},
         {{0, 0, -1.5f},{0,0,1},{0.5f,0.5f,0.5f}, {0,0,1,1}, 1},
     };
-    */
     
+    /*
     const Cube cubes[7] = {
         {{0, 0, 0},{1,0,0},{1,1,1}, {1,1,1,1}, 0},
         {{2, 0, 0},{1,0,0},{1,1,1}, {1,0,0,1}, 0},
@@ -433,14 +435,15 @@ void DrawMyWeirdCubes(Viewport& viewport)
         {{10, 0, 0},{0,1,0},{1,1,1}, {0,1,0,1}, 0},
         {{12, 0, 0},{0,0,1},{1,1,1}, {0,0,1,1}, 0},
     };
+    */
     
     DrawCube(viewport, cubes[0]);
-    //DrawCube(viewport, cubes[1]);
-    //DrawCube(viewport, cubes[2]);
-    //DrawCube(viewport, cubes[3]);
-    //DrawCube(viewport, cubes[4]);
-    //DrawCube(viewport, cubes[5]);
-    //DrawCube(viewport, cubes[6]);
+    DrawCube(viewport, cubes[1]);
+    DrawCube(viewport, cubes[2]);
+    DrawCube(viewport, cubes[3]);
+    DrawCube(viewport, cubes[4]);
+    DrawCube(viewport, cubes[5]);
+    DrawCube(viewport, cubes[6]);
 }
 
 void DrawCube(Viewport& viewport, const Cube& cube)
