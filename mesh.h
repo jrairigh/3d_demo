@@ -1,5 +1,7 @@
 #pragma once
 
+#include "log.h"
+
 #include <fstream>
 #include <filesystem>
 #include <sstream>
@@ -125,13 +127,28 @@ MyMesh ParseObjFile(const std::filesystem::path& path)
         {
             ++triangle_count;
         }
+        else if(line.at(0) == 's')
+        {
+            Log("Shading type %s", line.substr(2).c_str());
+        }
+        else if(line.at(0) == 'o')
+        {
+            Log("Parsing object %s", line.substr(2).c_str());
+        }
     }
 
     in.clear();
     in.seekg(0, std::ios::beg);
-    in.seekp(0, std::ios::beg);
 
     MyMesh mesh{vertex_count, normal_count, uv_count, triangle_count};
+
+    Log("Mesh Details:\n"
+        "Vertices: %d\n"
+        "Normals: %d\n"
+        "UVs: %d\n"
+        "Triangles: %d\n",
+        vertex_count, normal_count, uv_count, triangle_count);
+
     vertex_count = 0;
     normal_count = 0;
     uv_count = 0;
@@ -181,7 +198,7 @@ MyMesh ParseObjFile(const std::filesystem::path& path)
             std::string group1, group2, group3;
             ss >> group1 >> group2 >> group3;
 
-            std::string groups[] = {group1, group2, group3};
+            std::string_view groups[] = {group1, group2, group3};
             for(int i = 0; i < 3; ++i)
             {
                 std::stringstream ss1;
