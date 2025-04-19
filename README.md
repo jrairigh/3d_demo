@@ -2,10 +2,12 @@
 An entirely CPU based 3d renderer with these features:
 - Orthographic and perspective projections
 - Depth buffer
-- Affine and perspective correct texture mapping
+- Texture mapping
 - Directional light
-- Optimizations:
-  - Culling triangles outside of view frustrum and facing away from camera
+- .OBJ Support
+
+## Goal
+Purely an educational project to better grasp modern 3D graphics pipeline. I'm specifically focused on black box parts handled by GPU like rasterization.
 
 ## How to Use
 - Mouse wheel zooms in/out
@@ -14,14 +16,11 @@ An entirely CPU based 3d renderer with these features:
 - Space bar changes between orthographic and perspective projection
 - Z key draws the depth buffer to the screen
 - W key draws the triangles of the meshes
-- Tab key switches between drawing different meshes
 - S key shows performance metrics
 - Esc key quits application
 
-## Improvements
-- Upper bounds of 53 fps at a 400x250 resolution (release build, every pixel drawn to on screen each frame)
-- Clip triangles to screen boundaries
-- Cull back facing triangles
-- Smarter triangle drawing algorithm
+## Future Enhancements
 - Perspective correct texture mapping
-- Use threads to render a smaller portion of full screen
+- Clip triangles to screen boundaries
+- Fixed floating point math for better subpixel accuracy
+- Use software threads to render a smaller portion of full screen
