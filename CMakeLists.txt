@@ -3,6 +3,8 @@ project(Demo3d)
 
 # Generate compile_commands.json
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Dependencies
 set(RAYLIB_VERSION 5.0)
@@ -33,7 +35,7 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(glm)
 
-add_executable(${PROJECT_NAME} runtime.cpp)
+add_executable(${PROJECT_NAME} runtime.cpp log.cpp)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE glm::glm)
 target_link_libraries(${PROJECT_NAME} PRIVATE raylib)

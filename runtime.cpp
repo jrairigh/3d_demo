@@ -1,13 +1,10 @@
+#include "log.h"
+#include "mesh.h"
 #include "viewport.h"
-
-#include "raymath.h"
 
 #define RAYGUI_IMPLEMENTATION
 #include "raygui_enums.h"
 #include "raygui.h"
-
-#include <string>
-#include <time.h>
 
 struct Vertex
 {
@@ -30,6 +27,7 @@ struct DirectionalLight
     ftype intensity;
 };
 
+MyMesh g_mesh;
 DirectionalLight g_main_light;
 Viewport g_main_viewport;
 Viewport g_axis_viewport;
@@ -50,7 +48,7 @@ int g_pixels_behind_other_pixels = 0;
 int g_backfacing_triangles = 0;
 
 void InitializeRuntime();
-void InitializeCamera(Viewport& viewport, const glm::ivec4& transform);
+void InitializeCamera(Viewport& viewport, const glm::ivec4& transform, const ftype fov, const ftype zoom_speed);
 void RunGame();
 void CloseGame();
 void Update();
@@ -62,8 +60,7 @@ void Render();
 void RenderWorld(Viewport& viewport);
 void RenderUI();
 void DrawPerformanceMetrics();
-void DrawMyWeirdCubes(Viewport& viewport);
-void DrawCube(Viewport& viewport, const Cube& cube);
+void DrawMyMesh(Viewport& viewport, const MyMesh& mesh);
 void DrawAxis(const Viewport& viewport, const glm::vec4 position);
 void DrawLine3d(const Viewport& viewport, const glm::vec4 start, const glm::vec4 end, const glm::vec4 color);
 void DrawColorPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color);
@@ -71,9 +68,6 @@ void DrawTextureSampledPixel(Viewport& viewport, const int x, const int y, const
 void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color);
 void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only);
 void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only);
-void DrawQuad(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only);
-void LogMat4(const char* name, const glm::mat4& m4);
-void Log(const char* format, ...);
 ftype GetSmoothedMouseWheelScroll();
 glm::vec2 GetSmoothedMouseMove(const int button);
 glm::vec2 GetScreenResizeFactor();
@@ -97,29 +91,29 @@ int main()
 void InitializeRuntime()
 {
     const int screen_width = 800;
-    const int screen_height = 450;
+    const int screen_height = 600;
     InitWindow(screen_width, screen_height, "3D Demo");
-    SetWindowState(FLAG_WINDOW_RESIZABLE);
+    //SetWindowState(FLAG_WINDOW_RESIZABLE);
     GuiLoadStyleDefault();
 
     SetTraceLogLevel(LOG_DEBUG);
 
-    InitializeCamera(g_main_viewport, {0, 0, screen_width, screen_height});
-    InitializeCamera(g_axis_viewport, {screen_width - 200, 0, 200, 200});
+    InitializeCamera(g_main_viewport, {0, 0, screen_width, screen_height}, 20.0f, 250.0f);
+    InitializeCamera(g_axis_viewport, {screen_width - 100, 0, 100, 100}, 5.0f, 0.0f);
     SetTargetFPS(60);
 
     g_sprite_atlas = LoadImage("assets/WallpaperAtlas.png");
+    g_mesh = ParseObjFile("assets/Suzanne.obj");
 
     g_main_light.direction = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
     g_main_light.color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
     g_main_light.intensity = 1.0f;
 }
 
-void InitializeCamera(Viewport& viewport, const glm::ivec4& transform)
+void InitializeCamera(Viewport& viewport, const glm::ivec4& transform, const ftype fov, const ftype zoom_speed)
 {
     const ftype near_plane = 4.5f;
     const ftype far_plane = 100.0f;
-    const ftype fov = 20.0f;
     
     MyCamera& camera = viewport.camera;
     camera.position = glm::vec3(0.0f, 0.0f, 15.0f);
@@ -128,7 +122,7 @@ void InitializeCamera(Viewport& viewport, const glm::ivec4& transform)
     camera.near_plane = near_plane;
     camera.far_plane = far_plane;
     camera.fov = fov;
-    camera.zoom_speed = 250.0f;
+    camera.zoom_speed = zoom_speed;
     camera.rotation_speed = 50.0f;
     camera.is_orthographic = false;
     
@@ -193,7 +187,6 @@ void Update()
     if(is_zkey_pressed && !g_is_rending_depth_buffer)
     {
         g_is_rending_depth_buffer = true;
-        UpdateTexture(g_main_viewport.z_tex2d, g_main_viewport.z_buffer.data);
     }
     else if(is_zkey_pressed && g_is_rending_depth_buffer)
     {
@@ -343,33 +336,37 @@ void Render()
     BeginDrawing();
     ClearBackground(BLACK);
     RenderWorld(g_main_viewport);
-    DrawAxis(g_axis_viewport, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
     RenderUI();
     EndDrawing();
 }
 
 void RenderWorld(Viewport& viewport)
 {
+    ImageClearBackground(&viewport.z_buffer, WHITE);
+    ImageClearBackground(&viewport.color_buffer, BLACK);
+
+    DrawMyMesh(viewport, g_mesh);
+
     if(g_is_rending_depth_buffer)
     {
+        UpdateTexture(g_main_viewport.z_tex2d, g_main_viewport.z_buffer.data);
         DrawTexture(viewport.z_tex2d, 0, 0, WHITE);
         return;
     }
 
-    ImageClearBackground(&viewport.z_buffer, WHITE);
-    ImageClearBackground(&viewport.color_buffer, BLACK);
-
-    DrawMyWeirdCubes(viewport);
     UpdateTexture(viewport.color_tex2d, viewport.color_buffer.data);
     DrawTexture(viewport.color_tex2d, 0, 0, WHITE);
 }
 
 void RenderUI()
 {
+    DrawAxis(g_axis_viewport, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+
     MyCamera& camera = g_main_viewport.camera;
     std::string state = camera.is_orthographic ? "Orthographic" : "Perspective";
     state = g_is_rending_depth_buffer ? "Depth Buffer" : state;
-    DrawText(state.c_str(), 10, 10, 20, YELLOW);
+    Color text_color = g_is_rending_depth_buffer ? BLUE : YELLOW;
+    DrawText(state.c_str(), 10, 10, 20, text_color);
 
     GuiSlider({35, 30, 100, 20}, "Col", TextFormat("%d", g_wall_column), &g_wall_x, 0, 7);
     GuiSlider({35, 50, 100, 20}, "Row", TextFormat("%d", g_wall_row), &g_wall_y, 0, 14);
@@ -387,12 +384,6 @@ void RenderUI()
     g_main_light.color.g = color.y;
     g_main_light.color.b = color.z;
 
-    glm::vec4 rect = g_main_viewport.transform;
-    DrawRectangleLines((int)rect.x, (int)rect.y, (int)rect.z, (int)rect.w, WHITE);
-
-    rect = g_axis_viewport.transform;
-    DrawRectangleLines((int)rect.x, (int)rect.y, (int)rect.z, (int)rect.w, WHITE);
-
     if(g_is_viewing_performance_metrics)
     {
         DrawPerformanceMetrics();
@@ -408,98 +399,31 @@ void DrawPerformanceMetrics()
     DrawText(TextFormat("FPS: %d", fps), 10, 10, font_size, YELLOW);
 
     DrawText(TextFormat("Backfacing Triangles: %d", g_backfacing_triangles), 10, 30, font_size, YELLOW);
+    DrawText(TextFormat("Pixels Out-of-bounds: %d", g_pixels_outside_screen), 10, 50, font_size, YELLOW);
+    DrawText(TextFormat("Pixels behind pixles: %d", g_pixels_behind_other_pixels), 10, 70, font_size, YELLOW);
 }
 
-void DrawMyWeirdCubes(Viewport& viewport)
+void DrawMyMesh(Viewport& viewport, const MyMesh& mesh)
 {
-    /*
-    const Cube cubes[7] = {
-        {{0, 0, 0},{1,0,0},{1,1,1}, {1,1,1,1}, 0},
-        {{1.5f, 0, 0},{1,0,0},{0.5f,0.5f,0.5f}, {1,0,0,1}, 1},
-        {{0, 1.5f, 0},{0,1,0},{0.5f,0.5f,0.5f}, {0,1,0,1}, 1},
-        {{0, 0, 1.5f},{0,0,1},{0.5f,0.5f,0.5f}, {0,0,1,1}, 1},
-        {{-1.5f, 0, 0},{1,0,0},{0.5f,0.5f,0.5f}, {1,0,0,1}, 1},
-        {{0, -1.5f, 0},{0,1,0},{0.5f,0.5f,0.5f}, {0,1,0,1}, 1},
-        {{0, 0, -1.5f},{0,0,1},{0.5f,0.5f,0.5f}, {0,0,1,1}, 1},
-    };
-    */
-    
-    const Cube cubes[7] = {
-        {{0, 0, 0},{1,0,0},{1,1,1}, {1,1,1,1}, 0},
-        {{2, 0, 0},{1,0,0},{1,1,1}, {1,0,0,1}, 0},
-        {{4, 0, 0},{0,1,0},{1,1,1}, {0,1,0,1}, 0},
-        {{6, 0, 0},{0,0,1},{1,1,1}, {0,0,1,1}, 0},
-        {{8, 0, 0},{1,0,0},{1,1,1}, {1,0,0,1}, 0},
-        {{10, 0, 0},{0,1,0},{1,1,1}, {0,1,0,1}, 0},
-        {{12, 0, 0},{0,0,1},{1,1,1}, {0,0,1,1}, 0},
-    };
-    
-    DrawCube(viewport, cubes[0]);
-    //DrawCube(viewport, cubes[1]);
-    //DrawCube(viewport, cubes[2]);
-    //DrawCube(viewport, cubes[3]);
-    //DrawCube(viewport, cubes[4]);
-    //DrawCube(viewport, cubes[5]);
-    //DrawCube(viewport, cubes[6]);
-}
+    const glm::vec4 light_color{0, 0, 0, 0};
+    unsigned int* indices = mesh.get_indices();
+    float* vertices = mesh.get_vertices();
+    for(int i = 0; i < mesh.triangle_count(); ++i)
+    {
+        Vertex a{{}}, b{{}}, c{{}};
+        Vertex* vs[] = {&a, &b, &c};
+        for(int k = 0; k < 3; ++k)
+        {
+            Vertex* v = vs[k];
+            int j = indices[i * 3 + k];
+            float x = vertices[j * 3 + 0];
+            float y = vertices[j * 3 + 1];
+            float z = vertices[j * 3 + 2];
+            v->position = {x, y, z, 1.0f};
+        }
 
-void DrawCube(Viewport& viewport, const Cube& cube)
-{
-    const glm::mat4 objectToWorldSpace = TRSMatrix(cube.position, cube.rotation_axis, cube.scale, cube.angular_speed * g_since_start);
-    const ftype uv_top_left_x = 1.0f / g_sprite_atlas.width;
-    const ftype uv_top_left_y = 16.0f / g_sprite_atlas.height;
-    const ftype wall_width = (64.0f / g_sprite_atlas.width) - uv_top_left_x;
-    const ftype wall_height = (79.0f / g_sprite_atlas.height) - uv_top_left_y;
-    const ftype uv_xOffset = (65.0f / g_sprite_atlas.width) * g_wall_column + uv_top_left_x;
-    const ftype uv_yOffset = (65.0f / g_sprite_atlas.height) * g_wall_row + uv_top_left_y;
-    Vertex cube_vertices[8] = {
-        // Position
-        {{-1, -1, -1, 1}},
-        {{-1, 1, -1, 1}},
-        {{1, 1, -1, 1}},
-        {{1, -1, -1, 1}},
-        {{-1, -1, 1, 1}},
-        {{-1, 1, 1, 1}},
-        {{1, 1, 1, 1}},
-        {{1, -1, 1, 1}}
-    };
-
-    const glm::vec2 uv[4] = {
-        {uv_xOffset, uv_yOffset},
-        {uv_xOffset, uv_yOffset + wall_height},
-        {uv_xOffset + wall_width, uv_yOffset + wall_height},
-        {uv_xOffset + wall_width, uv_yOffset}
-    };
-
-    cube_vertices[0].position = objectToWorldSpace * cube_vertices[0].position;
-    cube_vertices[1].position = objectToWorldSpace * cube_vertices[1].position;
-    cube_vertices[2].position = objectToWorldSpace * cube_vertices[2].position;
-    cube_vertices[3].position = objectToWorldSpace * cube_vertices[3].position;
-    cube_vertices[4].position = objectToWorldSpace * cube_vertices[4].position;
-    cube_vertices[5].position = objectToWorldSpace * cube_vertices[5].position;
-    cube_vertices[6].position = objectToWorldSpace * cube_vertices[6].position;
-    cube_vertices[7].position = objectToWorldSpace * cube_vertices[7].position;
-
-    // the veritices are given assuming the starting camera position in the positive z direction looking at the origin
-    // the order is counter clockwise for quads camera is facing and clockwise for quads camera is not facing
-
-    // back face
-    DrawQuad(viewport, cube_vertices[0], cube_vertices[1], cube_vertices[2], cube_vertices[3], uv, {0,0,0,0}, g_draw_triangle_edges);
-    
-    // front face
-    DrawQuad(viewport, cube_vertices[7], cube_vertices[6], cube_vertices[5], cube_vertices[4], uv, {0,0,0,0}, g_draw_triangle_edges);
-    
-    // top face
-    DrawQuad(viewport, cube_vertices[1], cube_vertices[5], cube_vertices[6], cube_vertices[2], uv, {0,0,0,0}, g_draw_triangle_edges);
-    
-    // bottom face
-    DrawQuad(viewport, cube_vertices[0], cube_vertices[3], cube_vertices[7], cube_vertices[4], uv, {0,0,0,0}, g_draw_triangle_edges);
-    
-    // left face
-    DrawQuad(viewport, cube_vertices[0], cube_vertices[4], cube_vertices[5], cube_vertices[1], uv, {0,0,0,0}, g_draw_triangle_edges);
-    
-    // right face
-    DrawQuad(viewport, cube_vertices[2], cube_vertices[6], cube_vertices[7], cube_vertices[3], uv, {0,0,0,0}, g_draw_triangle_edges);
+        Draw3dTriangle(viewport, a, b, c, nullptr, light_color, g_draw_triangle_edges);
+    }
 }
 
 void DrawAxis(const Viewport& viewport, const glm::vec4 position)
@@ -525,7 +449,7 @@ void DrawLine3d(const Viewport& viewport, const glm::vec4 start, const glm::vec4
     clippedEnd /= clippedEnd.w;
 
     const Color raylib_color = ColorFromNormalized({color.x, color.y, color.z, color.w});
-    DrawLine((int)clippedStart.x, (int)clippedStart.y, (int)clippedEnd.x, (int)clippedEnd.y, raylib_color);
+    DrawLineEx({clippedStart.x, clippedStart.y}, {clippedEnd.x, clippedEnd.y}, 3.0f, raylib_color);
 }
 
 void DrawColorPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color)
@@ -589,17 +513,6 @@ void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const 
         return;
     }
 
-    // clip triangles outside of frustrum
-    //if(a_cam.z < g_camera.near_plane || b_cam.z < g_camera.near_plane || c_cam.z < g_camera.near_plane)
-    //{
-    //    return;
-    //}
-//
-    //if(a_cam.z > g_camera.far_plane || b_cam.z > g_camera.far_plane || c_cam.z > g_camera.far_plane)
-    //{
-    //    return;
-    //}
-
     const glm::mat4 cameraToScreenSpace = camera.clipToScreenSpace * camera.projectionMatrix;
 
     glm::vec4 a_screen = cameraToScreenSpace * a_cam;
@@ -623,16 +536,16 @@ void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const 
 
 void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
 {
-    const int screen_width = viewport.transform.z;
-    const int screen_height = viewport.transform.w;
+    //const int screen_width = viewport.transform.z;
+    //const int screen_height = viewport.transform.w;
     auto min_x = (int)glm::round(glm::min(a.position.x, glm::min(b.position.x, c.position.x)));
     auto max_x = (int)glm::round(glm::max(a.position.x, glm::max(b.position.x, c.position.x)));
     auto min_y = (int)glm::round(glm::min(a.position.y, glm::min(b.position.y, c.position.y)));
     auto max_y = (int)glm::round(glm::max(a.position.y, glm::max(b.position.y, c.position.y)));
-    min_x = glm::clamp<int>(min_x, 0, screen_width - 1);
-    max_x = glm::clamp<int>(max_x, 0, screen_width - 1);
-    min_y = glm::clamp<int>(min_y, 0, screen_height - 1);
-    max_y = glm::clamp<int>(max_y, 0, screen_height - 1);
+    //min_x = glm::clamp<int>(min_x, 0, screen_width - 1);
+    //max_x = glm::clamp<int>(max_x, 0, screen_width - 1);
+    //min_y = glm::clamp<int>(min_y, 0, screen_height - 1);
+    //max_y = glm::clamp<int>(max_y, 0, screen_height - 1);
     const auto dim_x = max_x - min_x;
     const auto dim_y = max_y - min_y;
     const auto dim = dim_x * dim_y;
@@ -646,19 +559,19 @@ void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Ve
     
     const glm::vec3 a_to_b = b.position - a.position;
     const glm::vec3 a_to_c = c.position - a.position;
+    // this is actually parallelogram area, but the ratio is the same between triangles and parallelograms
+    // when calculating the barycentric coordinates
+    const ftype triangle_area_recip = 1.0f / (a_to_c.x * a_to_b.y - a_to_c.y * a_to_b.x);
+
     for(int i = 0; i < dim; ++i)
     {
         const int x = min_x + i % dim_x;
         const int y = min_y + i / dim_x;
 
-        // this is actually parallelogram area, but the ratio is the same between triangles and parallelograms
-        // when calculating the barycentric coordinates
-        const ftype triangle_area = a_to_c.x * a_to_b.y - a_to_c.y * a_to_b.x;
-        
         // calculate the barycentric coordinates
         const glm::vec2 a_to_p{x - a.position.x, y - a.position.y};
-        const ftype alpha = (a_to_p.x * a_to_b.y - a_to_p.y * a_to_b.x) / triangle_area;
-        const ftype beta = -(a_to_p.x * a_to_c.y - a_to_p.y * a_to_c.x) / triangle_area;
+        const ftype alpha = (a_to_p.x * a_to_b.y - a_to_p.y * a_to_b.x) * triangle_area_recip;
+        const ftype beta = -(a_to_p.x * a_to_c.y - a_to_p.y * a_to_c.x) * triangle_area_recip;
         const ftype gamma = 1 - alpha - beta;
         const bool is_outside_triangle = alpha + bias_0 < 0 || beta + bias_2 < 0 || gamma + bias_1 < 0;
 
@@ -675,42 +588,15 @@ void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Ve
             const glm::vec4 white{1.0f, 1.0f, 1.0f, 1.0f};
             DrawColorPixel(viewport, x, y, z, white);
         }
-        else
+        else if(uv)
         {
             DrawTextureSampledPixel(viewport, x, y, z, gamma * uv[0] + alpha * uv[2] + beta * uv[1], add_color);
         }
+        else
+        {
+            DrawColorPixel(viewport, x, y, z, add_color);
+        }
     }
-}
-
-void DrawQuad(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const Vertex& d, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
-{
-    const glm::vec2 tri1_uvs[3] = {uv[2], uv[3], uv[0]};
-    const glm::vec2 tri2_uvs[3] = {uv[2], uv[0], uv[1]};
-    Draw3dTriangle(viewport, a, b, c, tri1_uvs, add_color, edges_only);
-    Draw3dTriangle(viewport, a, c, d, tri2_uvs, add_color, edges_only);
-}
-
-void LogMat4(const char* name, const glm::mat4& m4)
-{
-    Log("%s:\n%f %f %f %f\n%f %f %f %f\n%f %f %f %f\n%f %f %f %f\n", name,
-        m4[0][0], m4[1][0], m4[2][0], m4[3][0],
-        m4[0][1], m4[1][1], m4[2][1], m4[3][1],
-        m4[0][2], m4[1][2], m4[2][2], m4[3][2],
-        m4[0][3], m4[1][3], m4[2][3], m4[3][3]
-    );
-}
-
-void Log(const char* format, ...)
-{
-    char buffer[1024];
-    strcpy_s(buffer, 1024, "%0.3f   ");
-
-    va_list args;
-    va_start(args, format);
-    vsprintf_s(buffer + strlen(buffer), 1024 - strlen(buffer), format, args);
-    va_end(args);
-
-    TraceLog(LOG_DEBUG, buffer, g_since_start);
 }
 
 ftype GetSmoothedMouseWheelScroll()
