@@ -8,7 +8,9 @@
 
 struct Vertex
 {
-    glm::vec4 position;
+    glm::vec3 position;
+    glm::vec3 normal;
+    glm::vec2 uv;
 };
 
 struct Cube
@@ -103,7 +105,7 @@ void InitializeRuntime()
     SetTargetFPS(60);
 
     g_sprite_atlas = LoadImage("assets/WallpaperAtlas.png");
-    g_mesh = ParseObjFile("assets/Suzanne.obj");
+    g_mesh = ParseObjFile("assets/Cube.obj");
 
     g_main_light.direction = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
     g_main_light.color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -406,20 +408,32 @@ void DrawPerformanceMetrics()
 void DrawMyMesh(Viewport& viewport, const MyMesh& mesh)
 {
     const glm::vec4 light_color{0, 0, 0, 0};
-    unsigned int* indices = mesh.get_indices();
-    float* vertices = mesh.get_vertices();
     for(int i = 0; i < mesh.triangle_count(); ++i)
     {
+        constexpr int vertex_count = 3;
+        ftype vertices[3 * vertex_count];
+        ftype uvs[2 * vertex_count];
+        ftype normals[3 * vertex_count];
+        GetMeshTriangle(mesh, i, vertices, uvs, normals);
+
         Vertex a{{}}, b{{}}, c{{}};
-        Vertex* vs[] = {&a, &b, &c};
-        for(int k = 0; k < 3; ++k)
+        Vertex* vertex_container[] = {&a, &b, &c};
+        for(int k = 0; k < vertex_count; ++k)
         {
-            Vertex* v = vs[k];
-            int j = indices[i * 3 + k];
-            float x = vertices[j * 3 + 0];
-            float y = vertices[j * 3 + 1];
-            float z = vertices[j * 3 + 2];
-            v->position = {x, y, z, 1.0f};
+            Vertex* vertex = vertex_container[k];
+            const ftype x = vertices[k * 3 + 0];
+            const ftype y = vertices[k * 3 + 1];
+            const ftype z = vertices[k * 3 + 2];
+            vertex->position = {x, y, z};
+
+            const ftype nx = normals[k * 3 + 0];
+            const ftype ny = normals[k * 3 + 1];
+            const ftype nz = normals[k * 3 + 2];
+            vertex->normal = {nx, ny, nz};
+
+            const ftype u = uvs[k * 2 + 0];
+            const ftype v = uvs[k * 2 + 1];
+            vertex->uv = {u, v};
         }
 
         Draw3dTriangle(viewport, a, b, c, nullptr, light_color, g_draw_triangle_edges);
@@ -465,9 +479,17 @@ void DrawTextureSampledPixel(Viewport& viewport, const int x, const int y, const
     };
 
     // affine texture mapping (creates the wobbly textures characteristic of PS1 games)
-    const glm::ivec2 texcoords = uv_matrix * uv;
-    const Vector4 texture_color = ColorNormalize(GetImageColor(g_sprite_atlas, texcoords.x % g_sprite_atlas.width, texcoords.y % g_sprite_atlas.height));
-    const glm::vec4 final_color = {texture_color.x * add_color.x, texture_color.y * add_color.y, texture_color.z * add_color.z, texture_color.w};
+    const glm::vec2 uv1 = {glm::fract(uv.x), glm::fract(uv.y)};
+    const glm::vec2 texcoords = uv_matrix * uv1;
+    const int u = (int)glm::floor(texcoords.x);
+    const int v = (int)glm::floor(texcoords.y);
+    const Vector4 texture_color = ColorNormalize(GetImageColor(g_sprite_atlas, u, v));
+    const glm::vec4 final_color = {
+        texture_color.x * add_color.x, 
+        texture_color.y * add_color.y, 
+        texture_color.z * add_color.z, 
+        texture_color.w
+    };
 
     DrawPixel(viewport, x, y, z, final_color);
 }
@@ -498,9 +520,9 @@ void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, cons
 void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
 {
     const MyCamera& camera = viewport.camera;
-    const glm::vec4 a_cam = camera.worldToCameraSpace * a.position;
-    const glm::vec4 b_cam = camera.worldToCameraSpace * b.position;
-    const glm::vec4 c_cam = camera.worldToCameraSpace * c.position;
+    const glm::vec4 a_cam = camera.worldToCameraSpace * glm::vec4(a.position, 1.0f);
+    const glm::vec4 b_cam = camera.worldToCameraSpace * glm::vec4(b.position, 1.0f);
+    const glm::vec4 c_cam = camera.worldToCameraSpace * glm::vec4(c.position, 1.0f);
 
     // clip triangles facing away from camera
     const glm::vec3 a_to_b = b_cam - a_cam;
@@ -528,24 +550,18 @@ void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const 
     glm::vec4 light_color = facingLightFactor * g_main_light.color;
     light_color.a = 1.0f;
 
-    const Vertex a1 = {a_screen};
-    const Vertex b1 = {b_screen};
-    const Vertex c1 = {c_screen};
+    const Vertex a1 = {a_screen, a.normal, a.uv};
+    const Vertex b1 = {b_screen, b.normal, b.uv};
+    const Vertex c1 = {c_screen, c.normal, c.uv};
     DrawTriangle(viewport, a1, b1, c1, uv, light_color, edges_only);
 }
 
 void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
 {
-    //const int screen_width = viewport.transform.z;
-    //const int screen_height = viewport.transform.w;
     auto min_x = (int)glm::round(glm::min(a.position.x, glm::min(b.position.x, c.position.x)));
     auto max_x = (int)glm::round(glm::max(a.position.x, glm::max(b.position.x, c.position.x)));
     auto min_y = (int)glm::round(glm::min(a.position.y, glm::min(b.position.y, c.position.y)));
     auto max_y = (int)glm::round(glm::max(a.position.y, glm::max(b.position.y, c.position.y)));
-    //min_x = glm::clamp<int>(min_x, 0, screen_width - 1);
-    //max_x = glm::clamp<int>(max_x, 0, screen_width - 1);
-    //min_y = glm::clamp<int>(min_y, 0, screen_height - 1);
-    //max_y = glm::clamp<int>(max_y, 0, screen_height - 1);
     const auto dim_x = max_x - min_x;
     const auto dim_y = max_y - min_y;
     const auto dim = dim_x * dim_y;
@@ -577,25 +593,19 @@ void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Ve
 
         if(is_outside_triangle)
         {
+            //ImageDrawPixelV(&viewport.color_buffer, Vector2{(float)x, (float)y}, PINK);
             continue;
         }
 
         const ftype z = gamma * a.position.z + alpha * c.position.z + beta * b.position.z;
+        DrawTextureSampledPixel(viewport, x, y, z, gamma * a.uv + alpha * c.uv + beta * b.uv, add_color);
+    }
 
-        const ftype epsilon = 0.01f;
-        if(edges_only && (glm::epsilonEqual(alpha, 0.0f, epsilon) || glm::epsilonEqual(beta, 0.0f, epsilon) || glm::epsilonEqual(gamma, 0.0f, epsilon)))
-        {
-            const glm::vec4 white{1.0f, 1.0f, 1.0f, 1.0f};
-            DrawColorPixel(viewport, x, y, z, white);
-        }
-        else if(uv)
-        {
-            DrawTextureSampledPixel(viewport, x, y, z, gamma * uv[0] + alpha * uv[2] + beta * uv[1], add_color);
-        }
-        else
-        {
-            DrawColorPixel(viewport, x, y, z, add_color);
-        }
+    if(edges_only)
+    {
+        ImageDrawLineV(&viewport.color_buffer, {a.position.x, a.position.y}, {b.position.x, b.position.y}, WHITE);
+        ImageDrawLineV(&viewport.color_buffer, {b.position.x, b.position.y}, {c.position.x, c.position.y}, WHITE);
+        ImageDrawLineV(&viewport.color_buffer, {c.position.x, c.position.y}, {a.position.x, a.position.y}, WHITE);
     }
 }
 
