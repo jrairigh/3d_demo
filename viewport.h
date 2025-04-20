@@ -15,9 +15,7 @@ struct MyCamera
     glm::vec3 position;
     glm::vec3 lookAt;
     glm::vec3 up;
-    glm::mat4 worldToCameraSpace;
-    glm::mat4 projectionMatrix;
-    glm::mat4 clipToScreenSpace;
+    glm::mat4 worldToScreenSpace;
     ftype near_plane;
     ftype far_plane;
     ftype fov;

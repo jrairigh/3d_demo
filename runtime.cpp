@@ -105,7 +105,8 @@ void InitializeRuntime()
     SetTargetFPS(60);
 
     g_sprite_atlas = LoadImage("assets/WallpaperAtlas.png");
-    g_mesh = ParseObjFile("assets/Cube.obj");
+    g_mesh = ParseObjFile("assets/Suzanne.obj");
+    //g_mesh = ParseObjFile("assets/Cube.obj");
 
     g_main_light.direction = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
     g_main_light.color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -282,14 +283,16 @@ void UpdateViewport(Viewport& viewport, const glm::vec2 screen_resize_factor)
 
     camera.aspect = width / height;
 
-    camera.worldToCameraSpace = LookAt(camera.position, camera.lookAt, camera.up);
-    //LogMat4("World To Camera", camera.worldToCameraSpace);
+    const glm::mat4 worldToCameraSpace = LookAt(camera.position, camera.lookAt, camera.up);
+    //LogMat4("World To Camera", worldToCameraSpace);
 
-    camera.projectionMatrix = ProjectionMatrix(viewport);
-    //LogMat4("Projection", camera.projectionMatrix);
+    const glm::mat4 projectionMatrix = ProjectionMatrix(viewport);
+    //LogMat4("Projection", projectionMatrix);
     
-    camera.clipToScreenSpace = ClipToScreenSpaceMatrix(viewport);
-    //LogMat4("Clip To Screen", camera.clipToScreenSpace);
+    const glm::mat4 clipToScreenSpace = ClipToScreenSpaceMatrix(viewport);
+    //LogMat4("Clip To Screen", clipToScreenSpace);
+
+    camera.worldToScreenSpace = clipToScreenSpace * projectionMatrix * worldToCameraSpace;
 
     if(screen_resize_factor.x == 1.0f || screen_resize_factor.y == 1.0f)
     {
@@ -454,12 +457,11 @@ void DrawAxis(const Viewport& viewport, const glm::vec4 position)
 void DrawLine3d(const Viewport& viewport, const glm::vec4 start, const glm::vec4 end, const glm::vec4 color)
 {
     const MyCamera& camera = viewport.camera;
-    const glm::mat4 objectToScreenSpace = camera.clipToScreenSpace * camera.projectionMatrix * camera.worldToCameraSpace;
 
-    glm::vec4 clippedStart = objectToScreenSpace * start;
+    glm::vec4 clippedStart = camera.worldToScreenSpace * start;
     clippedStart /= clippedStart.w;
 
-    glm::vec4 clippedEnd = objectToScreenSpace * end;
+    glm::vec4 clippedEnd = camera.worldToScreenSpace * end;
     clippedEnd /= clippedEnd.w;
 
     const Color raylib_color = ColorFromNormalized({color.x, color.y, color.z, color.w});
@@ -520,44 +522,43 @@ void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, cons
 void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
 {
     const MyCamera& camera = viewport.camera;
-    const glm::vec4 a_cam = camera.worldToCameraSpace * glm::vec4(a.position, 1.0f);
-    const glm::vec4 b_cam = camera.worldToCameraSpace * glm::vec4(b.position, 1.0f);
-    const glm::vec4 c_cam = camera.worldToCameraSpace * glm::vec4(c.position, 1.0f);
+    glm::vec3 normal = (a.normal + b.normal + c.normal) / 3.0f;
 
-    // clip triangles facing away from camera
-    const glm::vec3 a_to_b = b_cam - a_cam;
-    const glm::vec3 a_to_c = c_cam - a_cam;
-    const glm::vec3 normal = glm::cross(a_to_c, a_to_b);
-
-    if(normal.z >= 0)
+    const glm::vec3 look_at_direction = camera.lookAt - camera.position;
+    const bool is_backfacing = glm::dot(normal, look_at_direction) >= 0.0f;
+    if(is_backfacing)
     {
         ++g_backfacing_triangles;
         return;
     }
 
-    const glm::mat4 cameraToScreenSpace = camera.clipToScreenSpace * camera.projectionMatrix;
-
-    glm::vec4 a_screen = cameraToScreenSpace * a_cam;
-    a_screen /= a_screen.w;
-
-    glm::vec4 b_screen = cameraToScreenSpace * b_cam;
-    b_screen /= b_screen.w;
-
-    glm::vec4 c_screen = cameraToScreenSpace * c_cam;
-    c_screen /= c_screen.w;
-
     const auto facingLightFactor = glm::clamp<ftype>(-glm::dot(g_main_light.direction, normal), 0.2f, 1);
     glm::vec4 light_color = facingLightFactor * g_main_light.color;
     light_color.a = 1.0f;
 
-    const Vertex a1 = {a_screen, a.normal, a.uv};
-    const Vertex b1 = {b_screen, b.normal, b.uv};
-    const Vertex c1 = {c_screen, c.normal, c.uv};
+    glm::vec4 a_screen = camera.worldToScreenSpace * glm::vec4(a.position, 1.0f);
+    glm::vec4 b_screen = camera.worldToScreenSpace * glm::vec4(b.position, 1.0f);
+    glm::vec4 c_screen = camera.worldToScreenSpace * glm::vec4(c.position, 1.0f);
+    a_screen /= a_screen.w;
+    b_screen /= b_screen.w;
+    c_screen /= c_screen.w;
+
+    const Vertex a1 = {a_screen, normal, a.uv};
+    const Vertex b1 = {b_screen, normal, b.uv};
+    const Vertex c1 = {c_screen, normal, c.uv};
     DrawTriangle(viewport, a1, b1, c1, uv, light_color, edges_only);
 }
 
 void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
 {
+    if(edges_only)
+    {
+        ImageDrawLineV(&viewport.color_buffer, {a.position.x, a.position.y}, {b.position.x, b.position.y}, WHITE);
+        ImageDrawLineV(&viewport.color_buffer, {b.position.x, b.position.y}, {c.position.x, c.position.y}, WHITE);
+        ImageDrawLineV(&viewport.color_buffer, {c.position.x, c.position.y}, {a.position.x, a.position.y}, WHITE);
+        return;
+    }
+    
     auto min_x = (int)glm::round(glm::min(a.position.x, glm::min(b.position.x, c.position.x)));
     auto max_x = (int)glm::round(glm::max(a.position.x, glm::max(b.position.x, c.position.x)));
     auto min_y = (int)glm::round(glm::min(a.position.y, glm::min(b.position.y, c.position.y)));
@@ -599,13 +600,6 @@ void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Ve
 
         const ftype z = gamma * a.position.z + alpha * c.position.z + beta * b.position.z;
         DrawTextureSampledPixel(viewport, x, y, z, gamma * a.uv + alpha * c.uv + beta * b.uv, add_color);
-    }
-
-    if(edges_only)
-    {
-        ImageDrawLineV(&viewport.color_buffer, {a.position.x, a.position.y}, {b.position.x, b.position.y}, WHITE);
-        ImageDrawLineV(&viewport.color_buffer, {b.position.x, b.position.y}, {c.position.x, c.position.y}, WHITE);
-        ImageDrawLineV(&viewport.color_buffer, {c.position.x, c.position.y}, {a.position.x, a.position.y}, WHITE);
     }
 }
 
