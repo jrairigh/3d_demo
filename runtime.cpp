@@ -354,7 +354,7 @@ void RenderWorld(Viewport& viewport)
 
     if(g_is_rending_depth_buffer)
     {
-        UpdateTexture(g_main_viewport.z_tex2d, g_main_viewport.z_buffer.data);
+        UpdateTexture(viewport.z_tex2d, viewport.z_buffer.data);
         DrawTexture(viewport.z_tex2d, 0, 0, WHITE);
         return;
     }
@@ -502,20 +502,22 @@ void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, cons
     const int screen_height = viewport.transform.w;
     const bool is_outside_z_bounds = z < -1 || z > 1;
     const bool is_outside_screen_bounds = x < 0 || x >= screen_width || y < 0 || y >= screen_height;
-    if(is_outside_screen_bounds)
+    if(is_outside_screen_bounds || is_outside_z_bounds)
     {
         ++g_pixels_outside_screen;
         return;
     }
 
+    const ftype z1 = z * 0.5f + 0.5f; // remap z from 0 to 1
     const float depth = ColorNormalize(GetImageColor(viewport.z_buffer, x, y)).z;
-    if(depth < z)
+    if(depth < z1)
     {
+        // values closer to 1 are further away from the camera
         ++g_pixels_behind_other_pixels;
         return;
     }
 
-    ImageDrawPixel(&viewport.z_buffer, x, y, ColorFromNormalized({z, z, z, 1.0f}));
+    ImageDrawPixel(&viewport.z_buffer, x, y, ColorFromNormalized({z1, z1, z1, 1.0f}));
     ImageDrawPixel(&viewport.color_buffer, x, y, ColorFromNormalized({color.r, color.g, color.b, color.a}));
 }
 
@@ -558,21 +560,37 @@ void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Ve
         ImageDrawLineV(&viewport.color_buffer, {c.position.x, c.position.y}, {a.position.x, a.position.y}, WHITE);
         return;
     }
-    
-    auto min_x = (int)glm::round(glm::min(a.position.x, glm::min(b.position.x, c.position.x)));
-    auto max_x = (int)glm::round(glm::max(a.position.x, glm::max(b.position.x, c.position.x)));
-    auto min_y = (int)glm::round(glm::min(a.position.y, glm::min(b.position.y, c.position.y)));
-    auto max_y = (int)glm::round(glm::max(a.position.y, glm::max(b.position.y, c.position.y)));
-    const auto dim_x = max_x - min_x;
-    const auto dim_y = max_y - min_y;
-    const auto dim = dim_x * dim_y;
 
-    // fix overlapping triangles using top-left edge rule
-    // there's issue using floating point because the floating point numbers are not evenly spaced.
-    // Solution is using fixed point numbers.
-    const ftype bias_0 = IsTopLeftOfTriangle(a.position, b.position) ? 0.0f : -0.0001f;
-    const ftype bias_1 = IsTopLeftOfTriangle(b.position, c.position) ? 0.0f : -0.0001f;
-    const ftype bias_2 = IsTopLeftOfTriangle(c.position, a.position) ? 0.0f : -0.0001f;
+    int x1 = (int)glm::floor(a.position.x);
+    int y1 = (int)glm::floor(a.position.y);
+    int x2 = (int)glm::floor(b.position.x);
+    int y2 = (int)glm::floor(b.position.y);
+    int x3 = (int)glm::floor(c.position.x);
+    int y3 = (int)glm::floor(c.position.y);
+
+    if(y1 == y2 && y2 == y3)
+    {
+        // all points are on the same line, no need to draw anything
+        return;
+    }
+
+    if(y1 > y2)
+    {
+        std::swap(x1, x2);
+        std::swap(y1, y2);
+    }
+    
+    if(y1 > y3)
+    {
+        std::swap(x1, x3);
+        std::swap(y1, y3);
+    }
+
+    if(y2 > y3)
+    {
+        std::swap(x2, x3);
+        std::swap(y2, y3);
+    }
     
     const glm::vec3 a_to_b = b.position - a.position;
     const glm::vec3 a_to_c = c.position - a.position;
@@ -580,26 +598,53 @@ void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Ve
     // when calculating the barycentric coordinates
     const ftype triangle_area_recip = 1.0f / (a_to_c.x * a_to_b.y - a_to_c.y * a_to_b.x);
 
-    for(int i = 0; i < dim; ++i)
-    {
-        const int x = min_x + i % dim_x;
-        const int y = min_y + i / dim_x;
-
-        // calculate the barycentric coordinates
-        const glm::vec2 a_to_p{x - a.position.x, y - a.position.y};
-        const ftype alpha = (a_to_p.x * a_to_b.y - a_to_p.y * a_to_b.x) * triangle_area_recip;
-        const ftype beta = -(a_to_p.x * a_to_c.y - a_to_p.y * a_to_c.x) * triangle_area_recip;
-        const ftype gamma = 1 - alpha - beta;
-        const bool is_outside_triangle = alpha + bias_0 < 0 || beta + bias_2 < 0 || gamma + bias_1 < 0;
-
-        if(is_outside_triangle)
+    const auto DrawTriangle = [&](Viewport& viewport, const int y_start, const int y_end, const int x_off_1, const int y_off_1, const int x_off_2, const int y_off_2, const ftype slope_1, const ftype slope_2){
+        for(int y = y_start; y < y_end; ++y)
         {
-            //ImageDrawPixelV(&viewport.color_buffer, Vector2{(float)x, (float)y}, PINK);
-            continue;
+            int start_x = (int)glm::floor(slope_1 * (y - y_off_1)) + x_off_1;
+            int end_x = (int)glm::floor(slope_2 * (y - y_off_2)) + x_off_2;
+    
+            if(start_x > end_x)
+            {
+                std::swap(start_x, end_x);
+            }
+    
+            for(int x = start_x; x <= end_x; ++x)
+            {
+                // calculate the barycentric coordinates
+                const glm::vec2 a_to_p{x - a.position.x, y - a.position.y};
+                const ftype alpha = (a_to_p.x * a_to_b.y - a_to_p.y * a_to_b.x) * triangle_area_recip;
+                const ftype beta = -(a_to_p.x * a_to_c.y - a_to_p.y * a_to_c.x) * triangle_area_recip;
+                const ftype gamma = 1 - alpha - beta;
+                
+                const ftype z = gamma * a.position.z + alpha * c.position.z + beta * b.position.z;
+                DrawTextureSampledPixel(viewport, x, y, z, gamma * a.uv + alpha * c.uv + beta * b.uv, add_color);
+                //DrawColorPixel(viewport, x, y, z, glm::vec4(gamma, beta, alpha, 1.0f));
+            }
         }
+    };
 
-        const ftype z = gamma * a.position.z + alpha * c.position.z + beta * b.position.z;
-        DrawTextureSampledPixel(viewport, x, y, z, gamma * a.uv + alpha * c.uv + beta * b.uv, add_color);
+    if(y1 == y2)
+    {
+        // top edge is horizontal
+        const ftype d_x3_y1 = (x3 - x1) / (ftype)(y3 - y1);
+        const ftype d_x3_y2 = (x3 - x2) / (ftype)(y3 - y2);
+        DrawTriangle(viewport, y2, y3, x1, y1, x2, y2, d_x3_y1, d_x3_y2);
+    }
+    else if(y2 == y3)
+    {
+        // bottom edge is horizontal
+        const ftype d_x2_y1 = (x2 - x1) / (ftype)(y2 - y1);
+        const ftype d_x3_y1 = (x3 - x1) / (ftype)(y3 - y1);
+        DrawTriangle(viewport, y1, y2, x1, y1, x1, y1, d_x2_y1, d_x3_y1);
+    }
+    else
+    {
+        const ftype d_x2_y1 = (x2 - x1) / (ftype)(y2 - y1);
+        const ftype d_x3_y1 = (x3 - x1) / (ftype)(y3 - y1);
+        const ftype d_x3_y2 = (x3 - x2) / (ftype)(y3 - y2);
+        DrawTriangle(viewport, y1, y2, x1, y1, x1, y1, d_x2_y1, d_x3_y1);
+        DrawTriangle(viewport, y2, y3, x1, y1, x2, y2, d_x3_y1, d_x3_y2);
     }
 }
 
