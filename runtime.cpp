@@ -6,6 +6,11 @@
 #include "raygui_enums.h"
 #include "raygui.h"
 
+#include <thread>
+
+#define FLOAT_ACCURACY_TEST(x,p) (assert(23 - (long((*((unsigned long*)(&x)) >> 23) & 0xff) - 127) >= p))
+#define DOUBLE_ACCURACY_TEST(x,p) (assert(52 - (long long((*((unsigned long long*)(&x)) >> 52) & 0x7ff) - 1023) >= p))
+
 struct Vertex
 {
     glm::vec3 position;
@@ -48,6 +53,7 @@ glm::vec2 g_ui_zone{175, 220};
 int g_pixels_outside_screen = 0;
 int g_pixels_behind_other_pixels = 0;
 int g_backfacing_triangles = 0;
+std::thread g_t1, g_t2;
 
 void InitializeRuntime();
 void InitializeCamera(Viewport& viewport, const glm::ivec4& transform, const ftype fov, const ftype zoom_speed);
@@ -68,8 +74,8 @@ void DrawLine3d(const Viewport& viewport, const glm::vec4 start, const glm::vec4
 void DrawColorPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color);
 void DrawTextureSampledPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec2 uv, const glm::vec4 add_color);
 void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, const glm::vec4 color);
-void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only);
-void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only);
+void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec4 add_color, const bool edges_only);
+void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec4 add_color, const bool edges_only);
 ftype GetSmoothedMouseWheelScroll();
 glm::vec2 GetSmoothedMouseMove(const int button);
 glm::vec2 GetScreenResizeFactor();
@@ -100,7 +106,7 @@ void InitializeRuntime()
 
     SetTraceLogLevel(LOG_DEBUG);
 
-    InitializeCamera(g_main_viewport, {0, 0, screen_width, screen_height}, 20.0f, 250.0f);
+    InitializeCamera(g_main_viewport, {0, 0, screen_width, screen_height}, 20.0f, 5.0f);
     InitializeCamera(g_axis_viewport, {screen_width - 100, 0, 100, 100}, 5.0f, 0.0f);
     SetTargetFPS(60);
 
@@ -119,7 +125,7 @@ void InitializeCamera(Viewport& viewport, const glm::ivec4& transform, const fty
     const ftype far_plane = 100.0f;
     
     MyCamera& camera = viewport.camera;
-    camera.position = glm::vec3(0.0f, 0.0f, 15.0f);
+    camera.position = glm::vec3(0.0f, 0.0f, 5.0f);
     camera.lookAt = glm::vec3(0.0f, 0.0f, 0.0f);
     camera.up = glm::vec3(0.0f, 1.0f, 0.0f);
     camera.near_plane = near_plane;
@@ -238,7 +244,7 @@ void UpdateCamera(Viewport& viewport, const ftype zoom, const glm::vec2 move, co
 
     // Min fov at 20 for now so fps doesn't drop too much
     camera.fov += -zoom * camera.zoom_speed;
-    camera.fov = glm::clamp<float>(camera.fov, 5, 180);
+    camera.fov = glm::clamp<float>(camera.fov, 0.25f, 5.0f);
     
     const ftype length = glm::length(camera.position);
     const ftype rotation_speed = camera.rotation_speed * length;
@@ -410,37 +416,56 @@ void DrawPerformanceMetrics()
 
 void DrawMyMesh(Viewport& viewport, const MyMesh& mesh)
 {
+    std::vector<Vertex> vertices;
+    vertices.resize(mesh.triangle_count() * 3);
     const glm::vec4 light_color{0, 0, 0, 0};
-    for(int i = 0; i < mesh.triangle_count(); ++i)
+    constexpr int vertex_count = 3;
+    ftype pos[3 * vertex_count];
+    ftype uvs[2 * vertex_count];
+    ftype normals[3 * vertex_count];
+
+    const glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3{0.015625f});
+
+    for(int i = 0, j = 0; i < mesh.triangle_count(); ++i, j += 3)
     {
-        constexpr int vertex_count = 3;
-        ftype vertices[3 * vertex_count];
-        ftype uvs[2 * vertex_count];
-        ftype normals[3 * vertex_count];
-        GetMeshTriangle(mesh, i, vertices, uvs, normals);
+        GetMeshTriangle(mesh, i, pos, uvs, normals);
 
-        Vertex a{{}}, b{{}}, c{{}};
-        Vertex* vertex_container[] = {&a, &b, &c};
-        for(int k = 0; k < vertex_count; ++k)
-        {
-            Vertex* vertex = vertex_container[k];
-            const ftype x = vertices[k * 3 + 0];
-            const ftype y = vertices[k * 3 + 1];
-            const ftype z = vertices[k * 3 + 2];
-            vertex->position = {x, y, z};
+        Vertex& vertex1 = vertices[j + 0];
+        vertex1.position = scale * glm::vec4{pos[0], pos[1], pos[2], 1.0f};
+        vertex1.normal = {normals[0], normals[1], normals[2]};
+        vertex1.uv = {uvs[0], uvs[1]};
 
-            const ftype nx = normals[k * 3 + 0];
-            const ftype ny = normals[k * 3 + 1];
-            const ftype nz = normals[k * 3 + 2];
-            vertex->normal = {nx, ny, nz};
+        Vertex& vertex2 = vertices[j + 1];
+        vertex2.position = scale * glm::vec4{pos[3], pos[4], pos[5], 1.0f};
+        vertex2.normal = {normals[3], normals[4], normals[5]};
+        vertex2.uv = {uvs[2], uvs[3]};
 
-            const ftype u = uvs[k * 2 + 0];
-            const ftype v = uvs[k * 2 + 1];
-            vertex->uv = {u, v};
-        }
-
-        Draw3dTriangle(viewport, a, b, c, nullptr, light_color, g_draw_triangle_edges);
+        Vertex& vertex3 = vertices[j + 2];
+        vertex3.position = scale * glm::vec4{pos[6], pos[7], pos[8], 1.0f};
+        vertex3.normal = {normals[6], normals[7], normals[8]};
+        vertex3.uv = {uvs[4], uvs[5]};
     }
+
+    int tri_count1 = mesh.triangle_count() / 2;
+    int tri_count2 = mesh.triangle_count() - tri_count1;
+    g_t1.swap(std::thread([&]()
+    {
+        for(int i = 0, j = 0; i < tri_count1; ++i, j += 3)
+        {
+            Draw3dTriangle(viewport, vertices[j+0], vertices[j+1], vertices[j+2], light_color, g_draw_triangle_edges);
+        }
+    }));
+
+    g_t2.swap(std::thread([&]()
+    {
+        for(int i = 0, j = tri_count1 * 3; i < tri_count2; ++i, j += 3)
+        {
+            Draw3dTriangle(viewport, vertices[j+0], vertices[j+1], vertices[j+2], light_color, g_draw_triangle_edges);
+        }
+    }));
+
+    g_t1.join();
+    g_t2.join();
 }
 
 void DrawAxis(const Viewport& viewport, const glm::vec4 position)
@@ -521,7 +546,7 @@ void DrawPixel(Viewport& viewport, const int x, const int y, const ftype z, cons
     ImageDrawPixel(&viewport.color_buffer, x, y, ColorFromNormalized({color.r, color.g, color.b, color.a}));
 }
 
-void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
+void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec4 add_color, const bool edges_only)
 {
     const MyCamera& camera = viewport.camera;
     glm::vec3 normal = (a.normal + b.normal + c.normal) / 3.0f;
@@ -545,13 +570,23 @@ void Draw3dTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const 
     b_screen /= b_screen.w;
     c_screen /= c_screen.w;
 
+    FLOAT_ACCURACY_TEST(a_screen.x, 14);
+    FLOAT_ACCURACY_TEST(a_screen.y, 14);
+    FLOAT_ACCURACY_TEST(a_screen.z, 14);
+    FLOAT_ACCURACY_TEST(b_screen.x, 14);
+    FLOAT_ACCURACY_TEST(b_screen.y, 14);
+    FLOAT_ACCURACY_TEST(b_screen.z, 14);
+    FLOAT_ACCURACY_TEST(c_screen.x, 14);
+    FLOAT_ACCURACY_TEST(c_screen.y, 14);
+    FLOAT_ACCURACY_TEST(c_screen.z, 14);
+
     const Vertex a1 = {a_screen, normal, a.uv};
     const Vertex b1 = {b_screen, normal, b.uv};
     const Vertex c1 = {c_screen, normal, c.uv};
-    DrawTriangle(viewport, a1, b1, c1, uv, light_color, edges_only);
+    DrawTriangle(viewport, a1, b1, c1, light_color, edges_only);
 }
 
-void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec2* uv, const glm::vec4 add_color, const bool edges_only)
+void DrawTriangle(Viewport& viewport, const Vertex& a, const Vertex& b, const Vertex& c, const glm::vec4 add_color, const bool edges_only)
 {
     if(edges_only)
     {
