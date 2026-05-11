@@ -7,13 +7,13 @@
 
 extern float g_since_start;
 
-void LogMat4(const char* name, const glm::mat4& m4)
+void LogMat4(const char* name, const Matrix& m4)
 {
     Log("%s:\n%f %f %f %f\n%f %f %f %f\n%f %f %f %f\n%f %f %f %f\n", name,
-        m4[0][0], m4[1][0], m4[2][0], m4[3][0],
-        m4[0][1], m4[1][1], m4[2][1], m4[3][1],
-        m4[0][2], m4[1][2], m4[2][2], m4[3][2],
-        m4[0][3], m4[1][3], m4[2][3], m4[3][3]
+        m4.m0, m4.m1, m4.m2, m4.m3,
+        m4.m4, m4.m5, m4.m6, m4.m7,
+        m4.m8, m4.m9, m4.m10, m4.m11,
+        m4.m12, m4.m13, m4.m14, m4.m15
     );
 }
 
